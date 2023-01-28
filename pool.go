@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
@@ -109,6 +110,9 @@ func newRawPgxPool(ctx context.Context, config *Config) (*pgxpool.Pool, error) {
 	pgConfig.MinConns = config.MinConns
 	pgConfig.MaxConnLifetime = config.MaxConnLifetime
 	pgConfig.MaxConnIdleTime = config.MaxConnIdleTime
+	if config.EnableTracing {
+		pgConfig.ConnConfig.Tracer = otelpgx.NewTracer(otelpgx.WithIncludeQueryParameters())
+	}
 	return pgxpool.NewWithConfig(ctx, pgConfig)
 }
 
