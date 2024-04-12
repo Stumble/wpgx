@@ -47,6 +47,9 @@ func newRawPgxPool(ctx context.Context, config *Config) (*pgxpool.Pool, error) {
 	pgConfig.MinConns = config.MinConns
 	pgConfig.MaxConnLifetime = config.MaxConnLifetime
 	pgConfig.MaxConnIdleTime = config.MaxConnIdleTime
+	if config.BeforeAcquire != nil {
+		pgConfig.BeforeAcquire = config.BeforeAcquire
+	}
 	return pgxpool.NewWithConfig(ctx, pgConfig)
 }
 

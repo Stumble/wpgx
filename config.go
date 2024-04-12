@@ -1,9 +1,11 @@
 package wpgx
 
 import (
+	"context"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/rs/zerolog/log"
 )
@@ -27,6 +29,8 @@ type Config struct {
 	EnablePrometheus bool          `default:"true"`
 	EnableTracing    bool          `default:"true"`
 	AppName          string        `required:"true"`
+
+	BeforeAcquire func(context.Context, *pgx.Conn) bool `ignored:"true"`
 }
 
 func (c *Config) Valid() error {
