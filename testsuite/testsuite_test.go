@@ -155,12 +155,13 @@ func (suite *metaTestSuite) TestInsertQuery() {
 func (suite *metaTestSuite) TestInsertUseGolden() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
+	tz, err := time.LoadLocation("America/Los_Angeles")
+	suite.Require().NoError(err)
 	exec := suite.Pool.WConn()
 	rst, err := exec.WExec(ctx,
 		"insert_data",
 		"INSERT INTO docs (id, rev, content, created_at, description) VALUES ($1,$2,$3,$4,$5)",
-		33, 666.7777, "hello world", time.Unix(1000, 0), json.RawMessage("{}"))
+		33, 666.7777, "hello world", time.Unix(1000, 0).UTC().In(tz), json.RawMessage("{}"))
 	suite.Nil(err)
 	n := rst.RowsAffected()
 	suite.Equal(int64(1), n)
@@ -256,6 +257,8 @@ func (suite *metaTestSuite) TestCopyFromUseGolden() {
 	defer cancel()
 	exec := suite.Pool.WConn()
 	dumper := &loaderDumper{exec: exec}
+	tz, err := time.LoadLocation("America/Los_Angeles")
+	suite.Require().NoError(err)
 	n, err := exec.WCopyFrom(ctx,
 		"CopyFrom", []string{"docs"},
 		[]string{"id", "rev", "content", "created_at", "description"},
@@ -264,21 +267,21 @@ func (suite *metaTestSuite) TestCopyFromUseGolden() {
 				Id:          1,
 				Rev:         0.1,
 				Content:     "Alice",
-				CreatedAt:   time.Unix(0, 1),
+				CreatedAt:   time.Unix(0, 1).UTC().In(tz),
 				Description: json.RawMessage(`{}`),
 			},
 			{
 				Id:          2,
 				Rev:         0.2,
 				Content:     "Bob",
-				CreatedAt:   time.Unix(100, 0),
+				CreatedAt:   time.Unix(100, 0).UTC().In(tz),
 				Description: json.RawMessage(`[]`),
 			},
 			{
 				Id:          3,
 				Rev:         0.3,
 				Content:     "Chris",
-				CreatedAt:   time.Unix(1000000, 100),
+				CreatedAt:   time.Unix(1000000, 100).UTC().In(tz),
 				Description: json.RawMessage(`{"key":"value"}`),
 			},
 		}})
