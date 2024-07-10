@@ -77,7 +77,7 @@ func NewPool(ctx context.Context, config *Config) (*Pool, error) {
 	return pool, nil
 }
 
-func (p *Pool) updateMetrics(ctx context.Context) {
+func (p *Pool) updateMetrics(_ context.Context) {
 	defer p.wg.Done()
 	ticker := time.NewTicker(connPoolUpdateInterval)
 	defer ticker.Stop()
@@ -119,7 +119,7 @@ func (p *Pool) WConn() *WConn {
 func (p *Pool) Transact(ctx context.Context, txOptions pgx.TxOptions, fn TxFunc) (resp interface{}, err error) {
 	if p.tracer != nil {
 		ctx = p.tracer.TraceStart(ctx, transactionTraceSpanName)
-		defer p.tracer.TraceEnd(ctx, err)
+		defer p.tracer.TraceEnd(ctx, &err)
 	}
 	pgxTx, err := p.pool.BeginTx(ctx, txOptions)
 	if err != nil {

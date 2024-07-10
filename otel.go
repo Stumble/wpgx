@@ -60,8 +60,10 @@ func (t *tracer) TraceStart(ctx context.Context, queryName string) context.Conte
 }
 
 // TraceQueryEnd is called at the end of Query, QueryRow, and Exec calls.
-func (t *tracer) TraceEnd(ctx context.Context, err error) {
+func (t *tracer) TraceEnd(ctx context.Context, errPtr *error) {
 	span := trace.SpanFromContext(ctx)
-	recordError(span, err)
+	if errPtr != nil {
+		recordError(span, *errPtr)
+	}
 	span.End()
 }

@@ -15,6 +15,7 @@ type metricSet struct {
 	Request  *prometheus.CounterVec
 	Latency  *prometheus.HistogramVec
 	Intent   *prometheus.CounterVec
+	Error    *prometheus.CounterVec
 }
 
 var (
@@ -48,6 +49,11 @@ func newMetricSet(appName string) *metricSet {
 				Name: fmt.Sprintf("wpgx_intent_total"),
 				Help: "how many intent queries invoked, should be the sum of cached + hit_db.",
 			}, labels),
+		Error: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: fmt.Sprintf("wpgx_error_total"),
+				Help: "how many errors were generated for this app and op.",
+			}, labels),
 	}
 }
 
@@ -68,6 +74,10 @@ func (m *metricSet) Register() {
 	if err != nil {
 		log.Err(err).Msgf("failed to register Prometheus Intent counters")
 	}
+	err = prometheus.Register(m.Error)
+	if err != nil {
+		log.Err(err).Msgf("failed to register Prometheus Error counters")
+	}
 }
 
 func (m *metricSet) Unregister() {
@@ -75,12 +85,16 @@ func (m *metricSet) Unregister() {
 	prometheus.Unregister(m.Request)
 	prometheus.Unregister(m.Latency)
 	prometheus.Unregister(m.Intent)
+	prometheus.Unregister(m.Error)
 }
 
-func (s *metricSet) MakeObserver(name string, startedAt time.Time) func() {
+func (s *metricSet) MakeObserver(name string, startedAt time.Time, errPtr *error) func() {
 	return func() {
 		if s.Request != nil {
 			s.Request.WithLabelValues(s.AppName, name).Inc()
+		}
+		if s.Error != nil && errPtr != nil && *errPtr != nil {
+			s.Error.WithLabelValues(s.AppName, name).Inc()
 		}
 		if s.Latency != nil {
 			s.Latency.WithLabelValues(s.AppName, name).Observe(

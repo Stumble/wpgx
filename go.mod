@@ -1,6 +1,6 @@
 module github.com/stumble/wpgx
 
-go 1.19
+go 1.22
 
 require (
 	github.com/jackc/pgx/v5 v5.4.3
