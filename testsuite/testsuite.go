@@ -178,6 +178,7 @@ func (suite *WPgxTestSuite) DumpState(filename string, dumper Dumper) {
 func (suite *WPgxTestSuite) Golden(tableName string, dumper Dumper) {
 	goldenFile := fmt.Sprintf("%s.%s.golden", suite.T().Name(), tableName)
 	if *update {
+		fmt.Printf("Updating golden file: %s\n", goldenFile)
 		suite.DumpState(goldenFile, dumper)
 		return
 	}
@@ -196,6 +197,7 @@ func (suite *WPgxTestSuite) GoldenVarJSON(varName string, v any) {
 	suite.Require().NoError(err, "Failed to JSON marshal: %s", varName)
 	goldenFile := fmt.Sprintf("%s.%s.var.golden", suite.T().Name(), varName)
 	if *update {
+		fmt.Printf("Updating golden file: %s\n", goldenFile)
 		suite.writeFile(goldenFile, bs)
 		return
 	}

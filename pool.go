@@ -205,12 +205,15 @@ func (p *Pool) WConn() *WConn {
 }
 
 // WConnFromReplica returns a wrapped connection for the replica instance by name.
-func (p *Pool) WConnFromReplica(name ReplicaName) (WQuerier, error) {
-	pp, ok := p.replicaPools[name]
-	if !ok {
-		return nil, fmt.Errorf("%w, name: %s", ErrReplicaNotFound, name)
+func (p *Pool) WQuerierFromReplica(name *ReplicaName) (WQuerier, error) {
+	if name == nil {
+		return p.WConn(), nil
 	}
-	return &WConn{p: pp, stats: p.stats, tracer: p.tracer, replicaName: &name}, nil
+	pp, ok := p.replicaPools[*name]
+	if !ok {
+		return nil, fmt.Errorf("%w, name: %s", ErrReplicaNotFound, *name)
+	}
+	return &WConn{p: pp, stats: p.stats, tracer: p.tracer, replicaName: name}, nil
 }
 
 // Transact is a wrapper of pgx.Transaction

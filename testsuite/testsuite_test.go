@@ -110,7 +110,7 @@ func NewMetaTestSuite() *metaTestSuite {
                id          INT NOT NULL,
                rev         DOUBLE PRECISION NOT NULL,
                content     VARCHAR(200) NOT NULL,
-               created_at  TIMESTAMP NOT NULL,
+               created_at  TIMESTAMPTZ NOT NULL,
                description JSON NOT NULL,
                PRIMARY KEY(id)
              );`,
@@ -150,6 +150,22 @@ func (suite *metaTestSuite) TestInsertQuery() {
 	err = rows.Scan(&content)
 	suite.Nil(err)
 	suite.Equal("hello world", content)
+}
+
+func (suite *metaTestSuite) TestUseWQuerier() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// load state to db from input
+	loader := &loaderDumper{exec: suite.Pool.WConn()}
+	suite.WPgxTestSuite.LoadState("TestQueryUseLoader.docs.json", loader)
+
+	querier, _ := suite.Pool.WQuerierFromReplica(nil)
+	rows, err := querier.WQuery(ctx,
+		"select_all",
+		"SELECT content, rev, created_at, description FROM docs WHERE id = $1", 33)
+	suite.Nil(err)
+	defer rows.Close()
 }
 
 func (suite *metaTestSuite) TestInsertUseGolden() {

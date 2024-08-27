@@ -3,7 +3,7 @@
     "id": 33,
     "rev": 666.7777,
     "content": "hello world",
-    "created_at": "1969-12-31T16:16:40Z",
+    "created_at": "1969-12-31T16:16:40-08:00",
     "description": {}
   }
 ]
