@@ -6,9 +6,10 @@ POSTGRES_DOCKER_NAME=$(NAME)-postgres
 POSTGRES_PASSWORD=my-secret
 POSTGRES_DB=$(NAME)_test_db
 POSTGRES_PORT=5432
+TIMEZONE=America/Los_Angeles
 
 docker-postgres-start:
-	docker run -d --name $(POSTGRES_DOCKER_NAME) -e POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) -e POSTGRES_DB=$(POSTGRES_DB) -p $(POSTGRES_PORT):5432 postgres:14.5
+	docker run -d --name $(POSTGRES_DOCKER_NAME) -e PGTZ=$(TIMEZONE) -e POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) -e POSTGRES_DB=$(POSTGRES_DB) -p $(POSTGRES_PORT):5432 postgres:14.5
 	sleep 2
 
 docker-postgres-stop:
