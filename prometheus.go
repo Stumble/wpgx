@@ -19,10 +19,10 @@ type metricSet struct {
 }
 
 var (
-	labels        = []string{"app", "op"}
+	labels        = []string{"app", "op", "replica"}
 	latencyBucket = []float64{
-		4, 8, 16, 32, 64, 128, 256, 512, 1024, 2 * 1024, 4 * 1024, 8 * 1024, 16 * 1024}
-	connPoolUpdateInterval = 15 * time.Second
+		4, 8, 16, 32, 64, 128, 256, 512, 1024, 2 * 1024, 4 * 1024, 8 * 1024, 16 * 1024, 32 * 1024}
+	connPoolUpdateInterval = 3 * time.Second
 )
 
 func newMetricSet(appName string) *metricSet {
@@ -88,34 +88,43 @@ func (m *metricSet) Unregister() {
 	prometheus.Unregister(m.Error)
 }
 
-func (s *metricSet) MakeObserver(name string, startedAt time.Time, errPtr *error) func() {
+func (s *metricSet) MakeObserver(name string, replicaName *ReplicaName, startedAt time.Time, errPtr *error) func() {
 	return func() {
 		if s.Request != nil {
-			s.Request.WithLabelValues(s.AppName, name).Inc()
+			s.Request.WithLabelValues(s.AppName, name, toLabel(replicaName)).Inc()
 		}
 		if s.Error != nil && errPtr != nil && *errPtr != nil {
-			s.Error.WithLabelValues(s.AppName, name).Inc()
+			s.Error.WithLabelValues(s.AppName, name, toLabel(replicaName)).Inc()
 		}
 		if s.Latency != nil {
-			s.Latency.WithLabelValues(s.AppName, name).Observe(
+			s.Latency.WithLabelValues(s.AppName, name, toLabel(replicaName)).Observe(
 				float64(time.Since(startedAt).Milliseconds()))
 		}
 	}
 }
 
-func (s *metricSet) CountIntent(name string) {
+func (s *metricSet) CountIntent(name string, replicaName *ReplicaName) {
 	if s.Intent != nil {
-		s.Intent.WithLabelValues(s.AppName, name).Inc()
+		s.Intent.WithLabelValues(s.AppName, name, toLabel(replicaName)).Inc()
 	}
 }
 
-func (s *metricSet) UpdateConnPoolGauge(stats *pgxpool.Stat) {
+type pgxPoolStat struct {
+	replicaName *ReplicaName
+	stats       *pgxpool.Stat
+}
+
+func (s *metricSet) UpdateConnPoolGauge(statsList []pgxPoolStat) {
 	if s.ConnPool != nil {
-		s.ConnPool.WithLabelValues(s.AppName, "max_conns").Set(float64(stats.MaxConns()))
-		s.ConnPool.WithLabelValues(s.AppName, "total_conns").Set(float64(stats.TotalConns()))
-		s.ConnPool.WithLabelValues(s.AppName, "idle_conns").Set(float64(stats.IdleConns()))
-		s.ConnPool.WithLabelValues(s.AppName, "acquired_conns").Set(float64(stats.AcquiredConns()))
-		s.ConnPool.WithLabelValues(s.AppName, "constructing_conns").Set(
-			float64(stats.ConstructingConns()))
+		for _, poolStats := range statsList {
+			stats := poolStats.stats
+			replicaName := poolStats.replicaName
+			s.ConnPool.WithLabelValues(s.AppName, "max_conns", toLabel(replicaName)).Set(float64(stats.MaxConns()))
+			s.ConnPool.WithLabelValues(s.AppName, "total_conns", toLabel(replicaName)).Set(float64(stats.TotalConns()))
+			s.ConnPool.WithLabelValues(s.AppName, "idle_conns", toLabel(replicaName)).Set(float64(stats.IdleConns()))
+			s.ConnPool.WithLabelValues(s.AppName, "acquired_conns", toLabel(replicaName)).Set(float64(stats.AcquiredConns()))
+			s.ConnPool.WithLabelValues(s.AppName, "constructing_conns", toLabel(replicaName)).Set(
+				float64(stats.ConstructingConns()))
+		}
 	}
 }

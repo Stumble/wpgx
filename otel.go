@@ -45,7 +45,7 @@ func recordError(span trace.Span, err error) {
 
 // TraceStart is called at the beginning of Query, QueryRow, and Exec calls.
 // The returned context is used for the rest of the call and will be passed to TraceQueryEnd.
-func (t *tracer) TraceStart(ctx context.Context, queryName string) context.Context {
+func (t *tracer) TraceStart(ctx context.Context, queryName string, repliReplicaName *ReplicaName) context.Context {
 	if !trace.SpanFromContext(ctx).IsRecording() {
 		return ctx
 	}
@@ -54,6 +54,7 @@ func (t *tracer) TraceStart(ctx context.Context, queryName string) context.Conte
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(t.attrs...),
 		trace.WithAttributes(semconv.DBStatementKey.String(queryName)),
+		trace.WithAttributes(semconv.DBConnectionStringKey.String(toLabel(repliReplicaName))),
 	}
 	ctx, _ = t.tracer.Start(ctx, queryName, opts...)
 	return ctx

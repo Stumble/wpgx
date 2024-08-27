@@ -205,13 +205,19 @@ func (suite *metaTestSuite) TestQueryUseLoader() {
 	var rev float64
 	var createdAt time.Time
 	var desc json.RawMessage
+	var descObj struct {
+		GithubURL string `json:"github_url"`
+	}
 	suite.True(rows.Next())
 	err = rows.Scan(&content, &rev, &createdAt, &desc)
 	suite.Nil(err)
 	suite.Equal("content read from file", content)
 	suite.Equal(float64(66.66), rev)
 	suite.Equal(int64(1000), createdAt.Unix())
-	suite.Equal(json.RawMessage(`{"github_url":"github.com/stumble/wpgx"}`), desc)
+	suite.Require().Nil(err)
+	err = json.Unmarshal(desc, &descObj)
+	suite.Nil(err)
+	suite.Equal(`github.com/stumble/wpgx`, descObj.GithubURL)
 }
 
 func (suite *metaTestSuite) TestQueryUseLoadTemplate() {
@@ -234,7 +240,7 @@ func (suite *metaTestSuite) TestQueryUseLoadTemplate() {
 		})
 
 	rows, err := exec.WQuery(ctx,
-		"select_all",
+		"select_one",
 		"SELECT content, rev, created_at, description FROM docs WHERE id = $1", 33)
 	suite.Nil(err)
 	defer rows.Close()
@@ -243,13 +249,19 @@ func (suite *metaTestSuite) TestQueryUseLoadTemplate() {
 	var rev float64
 	var createdAt time.Time
 	var desc json.RawMessage
+	var descObj struct {
+		GithubURL string `json:"github_url"`
+	}
 	suite.True(rows.Next())
 	err = rows.Scan(&content, &rev, &createdAt, &desc)
 	suite.Nil(err)
 	suite.Equal("content read from file", content)
 	suite.Equal(float64(66.66), rev)
 	suite.Equal(now.Unix(), createdAt.Unix())
-	suite.Equal(json.RawMessage(`{"github_url":"github.com/stumble/wpgx"}`), desc)
+	suite.Require().Nil(err)
+	err = json.Unmarshal(desc, &descObj)
+	suite.Nil(err)
+	suite.Equal(`github.com/stumble/wpgx`, descObj.GithubURL)
 }
 
 func (suite *metaTestSuite) TestCopyFromUseGolden() {
