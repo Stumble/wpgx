@@ -204,8 +204,9 @@ func (p *Pool) WConn() *WConn {
 	return &WConn{p: p.pool, stats: p.stats, tracer: p.tracer}
 }
 
-// WConnFromReplica returns a wrapped connection for the replica instance by name.
-func (p *Pool) WQuerierFromReplica(name *ReplicaName) (WQuerier, error) {
+// WQuerier returns a wrapped querier based on the given replica name.
+// When the name is nil, it returns the primary connection.
+func (p *Pool) WQuerier(name *ReplicaName) (WQuerier, error) {
 	if name == nil {
 		return p.WConn(), nil
 	}

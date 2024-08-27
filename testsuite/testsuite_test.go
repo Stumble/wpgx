@@ -162,7 +162,7 @@ func (suite *metaTestSuite) TestUseWQuerier() {
 	loader := &loaderDumper{exec: suite.Pool.WConn()}
 	suite.WPgxTestSuite.LoadState("TestQueryUseLoader.docs.json", loader)
 
-	querier, _ := suite.Pool.WQuerierFromReplica(nil)
+	querier, _ := suite.Pool.WQuerier(nil)
 	rows, err := querier.WQuery(ctx,
 		"select_all",
 		"SELECT content, rev, created_at, description FROM docs WHERE id = $1", 33)
