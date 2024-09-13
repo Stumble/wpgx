@@ -20,7 +20,7 @@ const (
 // Pool is the wrapped pgx pool that registers Prometheus.
 type Pool struct {
 	pool         *pgxpool.Pool
-	replicaPools map[ReplicaName]*pgxpool.Pool
+	replicaPools map[ReplicaName]*pgxpool.Pool // broken replica will use the primary pool
 	stats        *metricSet
 	tracer       *tracer
 
@@ -101,6 +101,11 @@ func NewPool(ctx context.Context, config *Config) (*Pool, error) {
 		replicaPools: make(map[ReplicaName]*pgxpool.Pool),
 	}
 	for _, replicaConfig := range config.ReadReplicas {
+		if replicaConfig.Broken {
+			log.Warn().Msgf("replica %s is broken! Use primary instead.", replicaConfig.Name)
+			pool.replicaPools[replicaConfig.Name] = primaryPool
+			continue
+		}
 		replicaPool, err := newRawPgxPool(ctx, &pgxConfig{
 			Username:        replicaConfig.Username,
 			Password:        replicaConfig.Password,
@@ -146,6 +151,10 @@ func (p *Pool) updateMetrics(_ context.Context) {
 			var allStats []pgxPoolStat
 			allStats = append(allStats, pgxPoolStat{replicaName: nil, stats: p.pool.Stat()})
 			for replicaName, replicaPool := range p.replicaPools {
+				// broken replica, skip
+				if replicaPool == p.pool {
+					continue
+				}
 				name := replicaName
 				allStats = append(allStats, pgxPoolStat{replicaName: &name, stats: replicaPool.Stat()})
 			}
@@ -157,6 +166,10 @@ func (p *Pool) updateMetrics(_ context.Context) {
 // Close closes all pools, spawned goroutines, and cancels the context.
 func (p *Pool) Close() {
 	for _, pp := range p.replicaPools {
+		// broken replica, skip
+		if pp == p.pool {
+			continue
+		}
 		p.wg.Add(1)
 		go func(replicaPool *pgxpool.Pool) {
 			defer p.wg.Done()
@@ -184,6 +197,10 @@ func (p *Pool) Ping(ctx context.Context) error {
 		return p.pool.Ping(ctx)
 	})
 	for _, replicaPool := range p.replicaPools {
+		// broken replica, skip
+		if replicaPool == p.pool {
+			continue
+		}
 		replicaPool := replicaPool
 		eg.Go(func() error {
 			return replicaPool.Ping(ctx)
@@ -213,6 +230,10 @@ func (p *Pool) WQuerier(name *ReplicaName) (WQuerier, error) {
 	pp, ok := p.replicaPools[*name]
 	if !ok {
 		return nil, fmt.Errorf("%w, name: %s", ErrReplicaNotFound, *name)
+	}
+	// This replica is configured as broken, use the primary pool instead.
+	if pp == p.pool {
+		return p.WConn(), nil
 	}
 	return &WConn{p: pp, stats: p.stats, tracer: p.tracer, replicaName: name}, nil
 }

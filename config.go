@@ -30,6 +30,7 @@ type ReadReplicaConfig struct {
 	// BeforeAcquire is a function that is called before acquiring a connection.
 	BeforeAcquire func(context.Context, *pgx.Conn) bool `ignored:"true"`
 	IsProxy       bool                                  `default:"false"`
+	Broken        bool                                  `default:"false"`
 }
 
 // Config is the configuration for the WPgx.
