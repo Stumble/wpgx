@@ -24,7 +24,7 @@ linters:
     # next-time
     # - dupl
     - errcheck
-    - exportloopref
+    # - exportloopref
     # - funlen
     # - gochecknoglobals
     # - gochecknoinits

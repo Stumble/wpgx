@@ -259,7 +259,7 @@ func (p *Pool) Transact(ctx context.Context, txOptions pgx.TxOptions, fn TxFunc)
 	defer func() {
 		rollbackErr := tx.Rollback(ctx)
 		if rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
-			err = rollbackErr
+			err = fmt.Errorf("rollback error: %w, original error: %w", rollbackErr, err)
 		}
 	}()
 	resp, err = fn(ctx, tx)
