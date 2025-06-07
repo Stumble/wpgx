@@ -160,7 +160,7 @@ func (suite *metaTestSuite) TestUseWQuerier() {
 
 	// load state to db from input
 	loader := &loaderDumper{exec: suite.Pool.WConn()}
-	suite.WPgxTestSuite.LoadState("TestQueryUseLoader.docs.json", loader)
+	suite.LoadState("TestQueryUseLoader.docs.json", loader)
 
 	querier, _ := suite.Pool.WQuerier(nil)
 	rows, err := querier.WQuery(ctx,
@@ -182,7 +182,7 @@ func (suite *metaTestSuite) TestInsertUseGolden() {
 	n := rst.RowsAffected()
 	suite.Equal(int64(1), n)
 	dumper := &loaderDumper{exec: exec}
-	suite.WPgxTestSuite.Golden("docs", dumper)
+	suite.Golden("docs", dumper)
 }
 
 func (suite *metaTestSuite) TestGoldenVarJSON() {
@@ -209,7 +209,7 @@ func (suite *metaTestSuite) TestQueryUseLoader() {
 
 	// load state to db from input
 	loader := &loaderDumper{exec: exec}
-	suite.WPgxTestSuite.LoadState("TestQueryUseLoader.docs.json", loader)
+	suite.LoadState("TestQueryUseLoader.docs.json", loader)
 
 	rows, err := exec.WQuery(ctx,
 		"select_all",
@@ -244,7 +244,7 @@ func (suite *metaTestSuite) TestQueryUseLoadTemplate() {
 	// load state to db from input
 	now := time.Now()
 	loader := &loaderDumper{exec: exec}
-	suite.WPgxTestSuite.LoadStateTmpl(
+	suite.LoadStateTmpl(
 		"TestQueryUseLoaderTemplate.docs.json.tmpl", loader, struct {
 			Rev       float64
 			CreatedAt string
