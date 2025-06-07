@@ -11,7 +11,6 @@ import (
 )
 
 const (
-	HighQPSMaxOpenConns = 100
 	DefaultEnvPrefix    = "postgres"
 	AppNameLengthMax    = 32
 )
