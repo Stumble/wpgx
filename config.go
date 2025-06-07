@@ -11,9 +11,8 @@ import (
 )
 
 const (
-	HighQPSMaxOpenConns = 100
-	DefaultEnvPrefix    = "postgres"
-	AppNameLengthMax    = 32
+	DefaultEnvPrefix = "postgres"
+	AppNameLengthMax = 32
 )
 
 type ReadReplicaConfig struct {
@@ -62,16 +61,16 @@ type Config struct {
 }
 
 func (c *Config) Valid() error {
-	if !(c.MinConns <= c.MaxConns) {
+	if c.MinConns > c.MaxConns {
 		return fmt.Errorf("MinConns must <= MaxConns, incorrect config: %s", c)
 	}
 	if len(c.AppName) == 0 || len(c.AppName) > AppNameLengthMax {
-		return fmt.Errorf("Invalid AppName: %s", c)
+		return fmt.Errorf("invalid AppName: %s", c)
 	}
 	showedNames := make(map[ReplicaName]bool)
 	for i, replica := range c.ReadReplicas {
 		if len(replica.Name) == 0 {
-			return fmt.Errorf("Invalid ReadReplicas[%d].Name: %s", i, c)
+			return fmt.Errorf("invalid ReadReplicas[%d].Name: %s", i, c)
 		}
 		if len(replica.Name) > AppNameLengthMax {
 			return fmt.Errorf("ReadReplicas[%d].Name is too long: %s", i, c)
@@ -83,7 +82,7 @@ func (c *Config) Valid() error {
 			return fmt.Errorf("ReadReplicas[%d].Name must be different from AppName: %s", i, c)
 		}
 		if _, ok := showedNames[replica.Name]; ok {
-			return fmt.Errorf("Duplicated ReadReplicas[%d].Name: %s", i, c)
+			return fmt.Errorf("duplicated ReadReplicas[%d].Name: %s", i, c)
 		}
 		showedNames[replica.Name] = true
 	}

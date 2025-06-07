@@ -1,7 +1,6 @@
 package wpgx
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,53 +29,52 @@ func newMetricSet(appName string) *metricSet {
 		AppName: appName,
 		ConnPool: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
-				Name: fmt.Sprintf("wpgx_conn_pool"),
+				Name: "wpgx_conn_pool",
 				Help: "connection pool status",
 			}, labels),
 		Request: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Name: fmt.Sprintf("wpgx_request_total"),
+				Name: "wpgx_request_total",
 				Help: "how many CRUD operations sent to DB.",
 			}, labels),
 		Latency: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Name:    fmt.Sprintf("wpgx_latency_milliseconds"),
+				Name:    "wpgx_latency_milliseconds",
 				Help:    "CRUD latency in milliseconds",
 				Buckets: latencyBucket,
 			}, labels),
 		Intent: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Name: fmt.Sprintf("wpgx_intent_total"),
+				Name: "wpgx_intent_total",
 				Help: "how many intent queries invoked, should be the sum of cached + hit_db.",
 			}, labels),
 		Error: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
-				Name: fmt.Sprintf("wpgx_error_total"),
+				Name: "wpgx_error_total",
 				Help: "how many errors were generated for this app and op.",
 			}, labels),
 	}
 }
 
 func (m *metricSet) Register() {
-	err := prometheus.Register(m.ConnPool)
-	if err != nil {
-		log.Err(err).Msgf("failed to register Prometheus ConnPool gauges")
+	var failed []string
+	if err := prometheus.Register(m.ConnPool); err != nil {
+		failed = append(failed, "ConnPool gauges")
 	}
-	err = prometheus.Register(m.Request)
-	if err != nil {
-		log.Err(err).Msgf("failed to register prometheus Request counters")
+	if err := prometheus.Register(m.Request); err != nil {
+		failed = append(failed, "Request counters")
 	}
-	err = prometheus.Register(m.Latency)
-	if err != nil {
-		log.Err(err).Msgf("failed to register Prometheus Latency histogram")
+	if err := prometheus.Register(m.Latency); err != nil {
+		failed = append(failed, "Latency histogram")
 	}
-	err = prometheus.Register(m.Intent)
-	if err != nil {
-		log.Err(err).Msgf("failed to register Prometheus Intent counters")
+	if err := prometheus.Register(m.Intent); err != nil {
+		failed = append(failed, "Intent counters")
 	}
-	err = prometheus.Register(m.Error)
-	if err != nil {
-		log.Err(err).Msgf("failed to register Prometheus Error counters")
+	if err := prometheus.Register(m.Error); err != nil {
+		failed = append(failed, "Error counters")
+	}
+	if len(failed) > 0 {
+		log.Error().Msgf("failed to register Prometheus metrics: %v", failed)
 	}
 }
 

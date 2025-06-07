@@ -45,11 +45,6 @@ type pgxConfig struct {
 }
 
 func newRawPgxPool(ctx context.Context, config *pgxConfig) (*pgxpool.Pool, error) {
-	if config.MaxConns < HighQPSMaxOpenConns {
-		log.Warn().Msgf(
-			"WPgx pool config has MaxOpenConns = %d,"+
-				"which may be too low to handle high QPS.", config.MaxConns)
-	}
 	pgConfig, err := pgxpool.ParseConfig(fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
 		config.Username,
 		config.Password,
