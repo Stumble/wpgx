@@ -16,6 +16,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nsf/jsondiff"
 	"github.com/stretchr/testify/suite"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/stumble/wpgx"
 )
@@ -36,30 +39,37 @@ var update = flag.Bool("update", false, "update .golden files")
 
 type WPgxTestSuite struct {
 	suite.Suite
-	Testdb string
-	Tables []string
-	Config *wpgx.Config
-	Pool   *wpgx.Pool
+	Testdb            string
+	Tables            []string
+	Config            *wpgx.Config
+	Pool              *wpgx.Pool
+	postgresContainer *postgres.PostgresContainer
+	useContainer      bool
 }
 
 // NewWPgxTestSuiteFromEnv @p db is the name of test db and tables are table creation
 // SQL statements. DB will be created, so does tables, on SetupTest.
 // If you pass different @p db for suites in different packages, you can test them in parallel.
+//
+// Use environment variable WPGX_TEST_USE_CONTAINER=true to enable testcontainers mode.
+// Otherwise, it will use direct connection mode (requires a running PostgreSQL instance).
 func NewWPgxTestSuiteFromEnv(db string, tables []string) *WPgxTestSuite {
+	useContainer := os.Getenv("WPGX_TEST_USE_CONTAINER") == "true"
 	config := wpgx.ConfigFromEnv()
 	config.DBName = db
-	return NewWPgxTestSuiteFromConfig(config, db, tables)
+	return NewWPgxTestSuiteFromConfig(config, db, tables, useContainer)
 }
 
 // NewWPgxTestSuiteFromConfig connect to PostgreSQL Server according to @p config,
 // @p db is the name of test db and tables are table creation
 // SQL statements. DB will be created, so does tables, on SetupTest.
 // If you pass different @p db for suites in different packages, you can test them in parallel.
-func NewWPgxTestSuiteFromConfig(config *wpgx.Config, db string, tables []string) *WPgxTestSuite {
+func NewWPgxTestSuiteFromConfig(config *wpgx.Config, db string, tables []string, useContainer bool) *WPgxTestSuite {
 	return &WPgxTestSuite{
-		Testdb: db,
-		Tables: tables,
-		Config: config,
+		Testdb:       db,
+		Tables:       tables,
+		Config:       config,
+		useContainer: useContainer,
 	}
 }
 
@@ -76,6 +86,69 @@ func (suite *WPgxTestSuite) GetPool() *wpgx.Pool {
 // setup the database to a clean state: tables have been created according to the
 // schema, empty.
 func (suite *WPgxTestSuite) SetupTest() {
+	if suite.useContainer {
+		suite.setupWithContainer()
+	} else {
+		suite.setupWithDirectConnection()
+	}
+}
+
+// setupWithContainer uses testcontainers to start a PostgreSQL container
+func (suite *WPgxTestSuite) setupWithContainer() {
+	ctx := context.Background()
+
+	if suite.Pool != nil {
+		suite.Pool.Close()
+	}
+
+	// Start PostgreSQL container
+	container, err := postgres.Run(ctx,
+		"postgres:14.5",
+		postgres.WithDatabase(suite.Testdb),
+		postgres.WithUsername("postgres"),
+		postgres.WithPassword("my-secret"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(60*time.Second)),
+	)
+	suite.Require().NoError(err, "failed to start postgres container")
+	suite.postgresContainer = container
+
+	// Get container connection string
+	connStr, err := container.ConnectionString(ctx, "sslmode=disable")
+	suite.Require().NoError(err, "failed to get connection string")
+
+	// Update config with container connection details
+	host, err := container.Host(ctx)
+	suite.Require().NoError(err, "failed to get container host")
+	port, err := container.MappedPort(ctx, "5432")
+	suite.Require().NoError(err, "failed to get container port")
+
+	suite.Config.Host = host
+	suite.Config.Port = port.Int()
+	suite.Config.Username = "postgres"
+	suite.Config.Password = "my-secret"
+	suite.Config.DBName = suite.Testdb
+
+	// Create pool
+	pool, err := wpgx.NewPool(context.Background(), suite.Config)
+	suite.Require().NoError(err, "wpgx NewPool failed, connStr: %s", connStr)
+	suite.Pool = pool
+	suite.Require().NoError(suite.Pool.Ping(context.Background()), "wpgx ping failed")
+
+	// Create tables
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, v := range suite.Tables {
+		exec := suite.Pool.WConn()
+		_, err := exec.WExec(ctx, "make_table", v)
+		suite.Require().NoError(err, "failed to create table when executing: %s", v)
+	}
+}
+
+// setupWithDirectConnection uses direct connection to an existing PostgreSQL instance
+func (suite *WPgxTestSuite) setupWithDirectConnection() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -111,6 +184,13 @@ func (suite *WPgxTestSuite) SetupTest() {
 func (suite *WPgxTestSuite) TearDownTest() {
 	if suite.Pool != nil {
 		suite.Pool.Close()
+	}
+	if suite.postgresContainer != nil {
+		ctx := context.Background()
+		if err := suite.postgresContainer.Terminate(ctx); err != nil {
+			suite.T().Logf("failed to terminate postgres container: %v", err)
+		}
+		suite.postgresContainer = nil
 	}
 }
 

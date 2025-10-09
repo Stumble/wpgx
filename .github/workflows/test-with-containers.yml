@@ -1,0 +1,34 @@
+# This workflow runs tests using testcontainers
+# No need to manually configure PostgreSQL services - testcontainers handles it all!
+
+name: Test with Testcontainers
+
+on:
+  push:
+    branches: [ "main", "feat/add_testsuite" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.22'
+
+    - name: Build
+      run: go build -v ./...
+    
+    - name: Test with Testcontainers
+      run: make test-container
+      env:
+        # Testcontainers will automatically start PostgreSQL containers
+        WPGX_TEST_USE_CONTAINER: "true"
+        ENV: "test"
+        POSTGRES_APPNAME: "wpgx"
+
