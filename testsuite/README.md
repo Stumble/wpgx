@@ -1,39 +1,39 @@
 # WPGX Test Suite
 
-这是一个为 PostgreSQL 数据库测试设计的测试框架工具包，支持两种测试模式：**直连模式**和**容器模式**。
+A comprehensive testing framework for PostgreSQL database tests, supporting two testing modes: **Direct Connection** and **Container Mode**.
 
-## 测试模式
+## Test Modes
 
-### 1. 直连模式（Direct Connection）
+### 1. Direct Connection Mode
 
-直接连接到已存在的 PostgreSQL 实例进行测试。
+Connect directly to an existing PostgreSQL instance for testing.
 
-**优点：**
-- 测试速度快（复用已有实例）
-- 适合本地开发快速迭代
+**Advantages:**
+- Fast test execution (reuses existing instance)
+- Ideal for rapid local development iteration
 
-**缺点：**
-- 需要手动启动 PostgreSQL
-- 需要配置环境变量
-- 测试隔离性较弱
+**Disadvantages:**
+- Requires manual PostgreSQL startup
+- Requires environment variable configuration
+- Weaker test isolation
 
-**使用方法：**
+**Usage:**
 
 ```bash
-# 1. 启动 PostgreSQL（使用 Docker）
+# 1. Start PostgreSQL (using Docker)
 make docker-postgres-start
 
-# 2. 运行测试
+# 2. Run tests
 make test-cmd
 
-# 3. 停止 PostgreSQL
+# 3. Stop PostgreSQL
 make docker-postgres-stop
 
-# 或者一键运行（自动启动和停止）
+# Or run with automatic start/stop
 make test
 ```
 
-**所需环境变量：**
+**Required Environment Variables:**
 ```bash
 export PGHOST=localhost
 export PGPORT=5432
@@ -43,41 +43,41 @@ export POSTGRES_APPNAME=wpgx
 export ENV=test
 ```
 
-### 2. 容器模式（Testcontainers）- **推荐用于 CI/CD**
+### 2. Container Mode (Testcontainers) - **Recommended for CI/CD**
 
-使用 [testcontainers-go](https://github.com/testcontainers/testcontainers-go) 自动管理 PostgreSQL 容器。
+Uses [testcontainers-go](https://github.com/testcontainers/testcontainers-go) to automatically manage PostgreSQL containers.
 
-**优点：**
-- ✅ 无需手动启动 PostgreSQL
-- ✅ 每个测试完全隔离
-- ✅ 自动清理，无残留
-- ✅ 适合 CI/CD 环境
-- ✅ 只需要 Docker，无其他依赖
+**Advantages:**
+- ✅ No manual PostgreSQL startup required
+- ✅ Complete test isolation
+- ✅ Automatic cleanup, no residuals
+- ✅ Perfect for CI/CD environments
+- ✅ Only requires Docker, no other dependencies
 
-**缺点：**
-- 容器启动有一定开销（首次拉取镜像）
+**Disadvantages:**
+- Container startup overhead (first-time image pull)
 
-**使用方法：**
+**Usage:**
 
 ```bash
-# 设置环境变量启用容器模式
+# Set environment variable to enable container mode
 export WPGX_TEST_USE_CONTAINER=true
 
-# 运行测试
+# Run tests
 make test-container
 
-# 或者直接运行（环境变量已包含在 Makefile 中）
+# Or run directly (environment variable included in Makefile)
 make test-container
 ```
 
-**仅需 Docker：**
-- 确保 Docker daemon 正在运行
-- testcontainers 会自动拉取并启动 PostgreSQL 容器
-- 测试结束后自动清理容器
+**Only Docker Required:**
+- Ensure Docker daemon is running
+- Testcontainers automatically pulls and starts PostgreSQL container
+- Automatically cleans up containers after tests
 
-## 在代码中使用
+## Usage in Code
 
-### 基本使用
+### Basic Usage
 
 ```go
 package mytest
@@ -94,7 +94,7 @@ type MyTestSuite struct {
 
 func NewMyTestSuite() *MyTestSuite {
     return &MyTestSuite{
-        // 会自动根据环境变量 WPGX_TEST_USE_CONTAINER 选择模式
+        // Automatically selects mode based on WPGX_TEST_USE_CONTAINER environment variable
         WPgxTestSuite: sqlsuite.NewWPgxTestSuiteFromEnv("mytestdb", []string{
             `CREATE TABLE users (
                 id INT PRIMARY KEY,
@@ -113,18 +113,18 @@ func (suite *MyTestSuite) SetupTest() {
 }
 
 func (suite *MyTestSuite) TestSomething() {
-    // 你的测试代码
+    // Your test code here
     exec := suite.Pool.WConn()
     // ...
 }
 ```
 
-### 强制指定模式
+### Force Specific Mode
 
-如果你想在代码中强制指定使用哪种模式：
+If you want to explicitly specify which mode to use in code:
 
 ```go
-// 强制使用容器模式
+// Force container mode
 suite := sqlsuite.NewWPgxTestSuiteFromConfig(
     config, 
     "mytestdb", 
@@ -132,7 +132,7 @@ suite := sqlsuite.NewWPgxTestSuiteFromConfig(
     true, // useContainer = true
 )
 
-// 强制使用直连模式
+// Force direct connection mode
 suite := sqlsuite.NewWPgxTestSuiteFromConfig(
     config, 
     "mytestdb", 
@@ -141,13 +141,13 @@ suite := sqlsuite.NewWPgxTestSuiteFromConfig(
 )
 ```
 
-## CI/CD 集成
+## CI/CD Integration
 
 ### GitHub Actions
 
-我们提供了两个 workflow 示例：
+We provide two workflow examples:
 
-#### 1. 使用 Testcontainers（推荐）
+#### 1. Using Testcontainers (Recommended)
 
 `.github/workflows/test-with-containers.yml`:
 ```yaml
@@ -155,12 +155,12 @@ suite := sqlsuite.NewWPgxTestSuiteFromConfig(
   run: make test-container
 ```
 
-**优点：**
-- 配置简单，无需定义 services
-- 更灵活，可以轻松切换 PostgreSQL 版本
-- 与本地开发环境一致
+**Advantages:**
+- Simple configuration, no need to define services
+- More flexible, easy to switch PostgreSQL versions
+- Consistent with local development environment
 
-#### 2. 使用 GitHub Actions Services（传统方式）
+#### 2. Using GitHub Actions Services (Traditional)
 
 `.github/workflows/go.yml`:
 ```yaml
@@ -171,41 +171,41 @@ services:
       POSTGRES_PASSWORD: my-secret
 ```
 
-**适用场景：**
-- 如果你已经有现成的配置
-- 需要多个服务同时运行
+**Use Cases:**
+- If you already have existing configuration
+- Need multiple services running simultaneously
 
-## Golden File 测试
+## Golden File Testing
 
-测试框架支持 Golden File 模式进行快照测试：
+The test framework supports Golden File mode for snapshot testing:
 
 ```go
 func (suite *MyTestSuite) TestWithGolden() {
-    // ... 执行一些操作 ...
+    // ... perform some operations ...
     
-    // 对比数据库状态与 golden file
+    // Compare database state with golden file
     dumper := &myDumper{exec: suite.Pool.WConn()}
     suite.Golden("tablename", dumper)
 }
 
-// 首次运行或更新 golden files
+// First run or update golden files
 go test -update
 ```
 
-## 数据加载
+## Data Loading
 
-### 从 JSON 文件加载
+### Load from JSON File
 
 ```go
 func (suite *MyTestSuite) TestLoadData() {
     loader := &myLoader{exec: suite.Pool.WConn()}
     suite.LoadState("testdata.json", loader)
     
-    // 测试使用加载的数据
+    // Test using loaded data
 }
 ```
 
-### 使用模板动态生成数据
+### Dynamically Generate Data with Templates
 
 ```go
 func (suite *MyTestSuite) TestLoadTemplate() {
@@ -220,46 +220,46 @@ func (suite *MyTestSuite) TestLoadTemplate() {
 }
 ```
 
-## 环境变量参考
+## Environment Variables Reference
 
-| 变量名 | 说明 | 默认值 | 必需 |
-|--------|------|--------|------|
-| `WPGX_TEST_USE_CONTAINER` | 启用容器模式 | `false` | 否 |
-| `PGHOST` | PostgreSQL 主机 | - | 直连模式必需 |
-| `PGPORT` | PostgreSQL 端口 | - | 直连模式必需 |
-| `PGUSER` | PostgreSQL 用户名 | - | 直连模式必需 |
-| `PGPASSWORD` | PostgreSQL 密码 | - | 直连模式必需 |
-| `POSTGRES_APPNAME` | 应用名称 | - | 可选 |
-| `ENV` | 环境标识 | - | 可选 |
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `WPGX_TEST_USE_CONTAINER` | Enable container mode | `false` | No |
+| `PGHOST` | PostgreSQL host | - | Required for direct mode |
+| `PGPORT` | PostgreSQL port | - | Required for direct mode |
+| `PGUSER` | PostgreSQL username | - | Required for direct mode |
+| `PGPASSWORD` | PostgreSQL password | - | Required for direct mode |
+| `POSTGRES_APPNAME` | Application name | - | Optional |
+| `ENV` | Environment identifier | - | Optional |
 
-## 常见问题
+## FAQ
 
-### Q: 容器模式下测试很慢？
+### Q: Tests are slow in container mode?
 
-A: 首次运行会拉取 PostgreSQL 镜像。之后的运行会快很多。你也可以提前拉取镜像：
+A: The first run will pull the PostgreSQL image. Subsequent runs will be much faster. You can also pre-pull the image:
 ```bash
 docker pull postgres:14.5
 ```
 
-### Q: 如何在本地使用容器模式？
+### Q: How to use container mode locally?
 
-A: 只需设置环境变量：
+A: Simply set the environment variable:
 ```bash
 export WPGX_TEST_USE_CONTAINER=true
 go test ./...
 ```
 
-### Q: CI/CD 中推荐使用哪种模式？
+### Q: Which mode is recommended for CI/CD?
 
-A: 推荐使用容器模式（`make test-container`），配置更简单，与本地环境一致。
+A: Container mode (`make test-container`) is recommended - simpler configuration and consistent with local environment.
 
-### Q: 两种模式可以同时使用吗？
+### Q: Can both modes be used simultaneously?
 
-A: 可以。通过环境变量 `WPGX_TEST_USE_CONTAINER` 控制，不同的测试命令可以使用不同的模式。
+A: Yes. Control via the `WPGX_TEST_USE_CONTAINER` environment variable. Different test commands can use different modes.
 
-## 参考资源
+## References
 
 - [testcontainers-go](https://github.com/testcontainers/testcontainers-go)
-- [testcontainers-go PostgreSQL 模块](https://github.com/testcontainers/testcontainers-go/tree/main/modules/postgres)
+- [testcontainers-go PostgreSQL Module](https://github.com/testcontainers/testcontainers-go/tree/main/modules/postgres)
 - [Testcontainers in CI Pipelines](https://github.com/filipsnastins/testcontainers-github-actions)
 
