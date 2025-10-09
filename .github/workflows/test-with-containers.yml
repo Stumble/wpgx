@@ -5,9 +5,9 @@ name: Test with Testcontainers
 
 on:
   push:
-    branches: [ "main", "feat/add_testsuite" ]
+    branches: [ "**" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "**" ]
 
 jobs:
   test:
