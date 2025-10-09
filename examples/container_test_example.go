@@ -10,15 +10,15 @@ import (
 	sqlsuite "github.com/stumble/wpgx/testsuite"
 )
 
-// ExampleTestSuite 展示如何使用 testsuite 框架
+// ExampleTestSuite demonstrates how to use the testsuite framework
 type ExampleTestSuite struct {
 	*sqlsuite.WPgxTestSuite
 }
 
-// NewExampleTestSuite 创建测试套件
-// 会根据环境变量 USE_TEST_CONTAINERS 自动选择：
-// - true: 使用 testcontainers 自动启动 PostgreSQL 容器
-// - false 或未设置: 使用直连模式（需要预先启动 PostgreSQL）
+// NewExampleTestSuite creates a test suite
+// Automatically selects mode based on USE_TEST_CONTAINERS environment variable:
+// - true: Uses testcontainers to automatically start PostgreSQL container
+// - false or unset: Uses direct connection mode (requires pre-started PostgreSQL)
 func NewExampleTestSuite() *ExampleTestSuite {
 	return &ExampleTestSuite{
 		WPgxTestSuite: sqlsuite.NewWPgxTestSuiteFromEnv("example_test_db", []string{
@@ -32,9 +32,9 @@ func NewExampleTestSuite() *ExampleTestSuite {
 	}
 }
 
-// 运行测试套件
-// go test ./examples/... -v                            # 直连模式
-// USE_TEST_CONTAINERS=true go test ./examples/... -v  # 容器模式
+// TestExampleTestSuite runs the test suite
+// go test ./examples/... -v                            # Direct connection mode
+// USE_TEST_CONTAINERS=true go test ./examples/... -v  # Container mode
 func TestExampleTestSuite(t *testing.T) {
 	suite.Run(t, NewExampleTestSuite())
 }
@@ -43,12 +43,12 @@ func (suite *ExampleTestSuite) SetupTest() {
 	suite.WPgxTestSuite.SetupTest()
 }
 
-// TestInsertAndQuery 示例测试：插入和查询数据
+// TestInsertAndQuery demonstrates inserting and querying data
 func (suite *ExampleTestSuite) TestInsertAndQuery() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 插入数据
+	// Insert data
 	exec := suite.Pool.WConn()
 	_, err := exec.WExec(ctx,
 		"insert_user",
@@ -56,14 +56,14 @@ func (suite *ExampleTestSuite) TestInsertAndQuery() {
 		1, "Alice", "alice@example.com", time.Now())
 	suite.Require().NoError(err)
 
-	// 查询数据
+	// Query data
 	rows, err := exec.WQuery(ctx,
 		"select_user",
 		"SELECT name, email FROM users WHERE id = $1", 1)
 	suite.Require().NoError(err)
 	defer rows.Close()
 
-	// 验证结果
+	// Verify results
 	suite.True(rows.Next())
 	var name, email string
 	err = rows.Scan(&name, &email)
@@ -72,15 +72,14 @@ func (suite *ExampleTestSuite) TestInsertAndQuery() {
 	suite.Equal("alice@example.com", email)
 }
 
-// TestUsingContainerInfo 展示如何在测试中获取连接信息
+// TestUsingContainerInfo demonstrates how to access connection information in tests
 func (suite *ExampleTestSuite) TestUsingContainerInfo() {
-	// 在容器模式下，Config 会被自动更新为容器的连接信息
+	// In container mode, Config is automatically updated with container connection details
 	suite.T().Logf("PostgreSQL Host: %s", suite.Config.Host)
 	suite.T().Logf("PostgreSQL Port: %d", suite.Config.Port)
 	suite.T().Logf("Database Name: %s", suite.Config.DBName)
 
-	// 确认可以连接
+	// Verify database connectivity
 	err := suite.Pool.Ping(context.Background())
 	suite.NoError(err, "should be able to ping database")
 }
-
