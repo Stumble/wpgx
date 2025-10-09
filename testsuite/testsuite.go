@@ -33,6 +33,13 @@ type Dumper interface {
 
 const (
 	TestDataDirPath = "testdata"
+
+	// Container configuration constants
+	defaultPostgresImage    = "postgres:14.5"
+	defaultPostgresUser     = "postgres"
+	defaultPostgresPassword = "my-secret"
+	containerStartupTimeout = 60 * time.Second
+	logOccurrenceCount      = 2
 )
 
 var update = flag.Bool("update", false, "update .golden files")
@@ -105,14 +112,14 @@ func (suite *WPgxTestSuite) setupWithContainer() {
 	// Use postgres superuser for reliable authentication across all environments.
 	// The default testcontainers credentials (test/test) can have authentication issues.
 	container, err := postgres.Run(ctx,
-		"postgres:14.5",
+		defaultPostgresImage,
 		postgres.WithDatabase(suite.Testdb),
-		postgres.WithUsername("postgres"),
-		postgres.WithPassword("my-secret"),
+		postgres.WithUsername(defaultPostgresUser),
+		postgres.WithPassword(defaultPostgresPassword),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(60*time.Second)),
+				WithOccurrence(logOccurrenceCount).
+				WithStartupTimeout(containerStartupTimeout)),
 	)
 	suite.Require().NoError(err, "failed to start postgres container")
 	suite.postgresContainer = container
@@ -129,8 +136,8 @@ func (suite *WPgxTestSuite) setupWithContainer() {
 
 	suite.Config.Host = host
 	suite.Config.Port = port.Int()
-	suite.Config.Username = "postgres"
-	suite.Config.Password = "my-secret"
+	suite.Config.Username = defaultPostgresUser
+	suite.Config.Password = defaultPostgresPassword
 	suite.Config.DBName = suite.Testdb
 
 	// Create pool

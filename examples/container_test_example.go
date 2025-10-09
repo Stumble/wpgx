@@ -7,12 +7,12 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	sqlsuite "github.com/stumble/wpgx/testsuite"
+	"github.com/stumble/wpgx/testsuite"
 )
 
 // ExampleTestSuite demonstrates how to use the testsuite framework
 type ExampleTestSuite struct {
-	*sqlsuite.WPgxTestSuite
+	*testsuite.WPgxTestSuite
 }
 
 // NewExampleTestSuite creates a test suite
@@ -21,7 +21,7 @@ type ExampleTestSuite struct {
 // - false or unset: Uses direct connection mode (requires pre-started PostgreSQL)
 func NewExampleTestSuite() *ExampleTestSuite {
 	return &ExampleTestSuite{
-		WPgxTestSuite: sqlsuite.NewWPgxTestSuiteFromEnv("example_test_db", []string{
+		WPgxTestSuite: testsuite.NewWPgxTestSuiteFromEnv("example_test_db", []string{
 			`CREATE TABLE IF NOT EXISTS users (
                id          INT PRIMARY KEY,
                name        VARCHAR(100) NOT NULL,
