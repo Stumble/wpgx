@@ -105,7 +105,6 @@ func (suite *WPgxTestSuite) setupWithContainer() {
 	container, err := postgres.Run(ctx,
 		"postgres:14.5",
 		postgres.WithDatabase(suite.Testdb),
-		// ← 使用 PostgreSQL 的默认超级用户名和密码，避免认证问题，默认值认证有报错
 		postgres.WithUsername("postgres"),
 		postgres.WithPassword("my-secret"),
 		testcontainers.WithWaitStrategy(
