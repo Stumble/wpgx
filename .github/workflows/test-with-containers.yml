@@ -7,7 +7,9 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
+    branches: 
+      - "main"
+      - "feat/**"
 
 jobs:
   test:
@@ -28,7 +30,7 @@ jobs:
       run: make test-container
       env:
         # Testcontainers will automatically start PostgreSQL containers
-        WPGX_TEST_USE_CONTAINER: "true"
+        USE_TEST_CONTAINERS: "true"
         ENV: "test"
         POSTGRES_APPNAME: "wpgx"
 

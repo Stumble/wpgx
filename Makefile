@@ -36,13 +36,13 @@ test-update-golden-cmd:
 test-container-cmd:
 	export ENV=test && \
 	export POSTGRES_APPNAME=wpgx && \
-	export WPGX_TEST_USE_CONTAINER=true && \
+	export USE_TEST_CONTAINERS=true && \
 	CGO_ENABLED=$(CGO_ENABLED) $(GO) test -count=1 -p 1 ./... -test.v
 
 test-container-update-golden-cmd:
 	export ENV=test && \
 	export POSTGRES_APPNAME=wpgx && \
-	export WPGX_TEST_USE_CONTAINER=true && \
+	export USE_TEST_CONTAINERS=true && \
 	CGO_ENABLED=$(CGO_ENABLED) $(GO) test -count=1 -p 1 ./... -test.v -update
 
 # Original test with manual docker management (direct connection)

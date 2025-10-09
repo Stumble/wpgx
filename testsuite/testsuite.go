@@ -51,10 +51,10 @@ type WPgxTestSuite struct {
 // SQL statements. DB will be created, so does tables, on SetupTest.
 // If you pass different @p db for suites in different packages, you can test them in parallel.
 //
-// Use environment variable WPGX_TEST_USE_CONTAINER=true to enable testcontainers mode.
+// Use environment variable USE_TEST_CONTAINERS=true to enable testcontainers mode.
 // Otherwise, it will use direct connection mode (requires a running PostgreSQL instance).
 func NewWPgxTestSuiteFromEnv(db string, tables []string) *WPgxTestSuite {
-	useContainer := os.Getenv("WPGX_TEST_USE_CONTAINER") == "true"
+	useContainer := os.Getenv("USE_TEST_CONTAINERS") == "true"
 	config := wpgx.ConfigFromEnv()
 	config.DBName = db
 	return NewWPgxTestSuiteFromConfig(config, db, tables, useContainer)

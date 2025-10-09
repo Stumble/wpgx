@@ -16,7 +16,7 @@ type ExampleTestSuite struct {
 }
 
 // NewExampleTestSuite 创建测试套件
-// 会根据环境变量 WPGX_TEST_USE_CONTAINER 自动选择：
+// 会根据环境变量 USE_TEST_CONTAINERS 自动选择：
 // - true: 使用 testcontainers 自动启动 PostgreSQL 容器
 // - false 或未设置: 使用直连模式（需要预先启动 PostgreSQL）
 func NewExampleTestSuite() *ExampleTestSuite {
@@ -33,8 +33,8 @@ func NewExampleTestSuite() *ExampleTestSuite {
 }
 
 // 运行测试套件
-// go test ./examples/... -v                              # 直连模式
-// WPGX_TEST_USE_CONTAINER=true go test ./examples/... -v # 容器模式
+// go test ./examples/... -v                            # 直连模式
+// USE_TEST_CONTAINERS=true go test ./examples/... -v  # 容器模式
 func TestExampleTestSuite(t *testing.T) {
 	suite.Run(t, NewExampleTestSuite())
 }

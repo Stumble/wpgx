@@ -49,7 +49,7 @@ make test-container
 
 ### Environment Variables
 
-- `WPGX_TEST_USE_CONTAINER=true` - Enable testcontainers mode
+- `USE_TEST_CONTAINERS=true` - Enable testcontainers mode
 - See [testsuite/README.md](testsuite/README.md) for detailed documentation
 
 ### CI/CD Integration
