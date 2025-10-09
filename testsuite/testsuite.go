@@ -102,6 +102,8 @@ func (suite *WPgxTestSuite) setupWithContainer() {
 	}
 
 	// Start PostgreSQL container
+	// Use postgres superuser for reliable authentication across all environments.
+	// The default testcontainers credentials (test/test) can have authentication issues.
 	container, err := postgres.Run(ctx,
 		"postgres:14.5",
 		postgres.WithDatabase(suite.Testdb),
