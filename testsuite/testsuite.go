@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nsf/jsondiff"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/stumble/wpgx"
@@ -40,6 +41,7 @@ type WPgxTestSuite struct {
 	Tables []string
 	Config *wpgx.Config
 	Pool   *wpgx.Pool
+	Redis  *redis.Client
 }
 
 // NewWPgxTestSuiteFromEnv @p db is the name of test db and tables are table creation
@@ -106,11 +108,17 @@ func (suite *WPgxTestSuite) SetupTest() {
 		_, err := exec.WExec(ctx, "make_table", v)
 		suite.Require().NoError(err, "failed to create table when executing: %s", v)
 	}
+
+	// setup Redis connection
+	suite.setupRedis(ctx)
 }
 
 func (suite *WPgxTestSuite) TearDownTest() {
 	if suite.Pool != nil {
 		suite.Pool.Close()
+	}
+	if suite.Redis != nil {
+		suite.Redis.Close()
 	}
 }
 
@@ -221,5 +229,40 @@ func ensureDir(dirName string) error {
 		return nil
 	} else {
 		return err
+	}
+}
+
+// setupRedis initializes Redis connection based on the configuration
+func (suite *WPgxTestSuite) setupRedis(ctx context.Context) {
+	if suite.Config == nil {
+		return
+	}
+
+	redisConfig := &redis.Options{
+		Addr:         fmt.Sprintf("%s:%d", suite.Config.Redis.Host, suite.Config.Redis.Port),
+		Password:     suite.Config.Redis.Password,
+		DB:           suite.Config.Redis.DB,
+		MaxRetries:   suite.Config.Redis.MaxRetries,
+		PoolSize:     suite.Config.Redis.PoolSize,
+		MinIdleConns: suite.Config.Redis.MinIdleConns,
+		PoolTimeout:  suite.Config.Redis.PoolTimeout,
+	}
+
+	suite.Redis = redis.NewClient(redisConfig)
+
+	// Test the connection
+	_, err := suite.Redis.Ping(ctx).Result()
+	suite.Require().NoError(err, "failed to connect to Redis")
+}
+
+// GetRedis returns the Redis client
+func (suite *WPgxTestSuite) GetRedis() *redis.Client {
+	return suite.Redis
+}
+
+// ClearRedis clears all keys from the current Redis database
+func (suite *WPgxTestSuite) ClearRedis(ctx context.Context) {
+	if suite.Redis != nil {
+		suite.Redis.FlushDB(ctx)
 	}
 }

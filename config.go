@@ -32,6 +32,28 @@ type ReadReplicaConfig struct {
 	Broken        bool                                  `default:"false"`
 }
 
+// RedisConfig is the configuration for Redis connection.
+type RedisConfig struct {
+	Host     string `default:"localhost"`
+	Port     int    `default:"6379"`
+	Password string `default:""`
+	DB       int    `default:"0"`
+	// MaxRetries is the maximum number of retries for failed commands.
+	MaxRetries int `default:"3"`
+	// PoolSize is the maximum number of connections in the pool.
+	PoolSize int `default:"10"`
+	// MinIdleConns is the minimum number of idle connections in the pool.
+	MinIdleConns int `default:"5"`
+	// MaxConnAge is the maximum age of a connection.
+	MaxConnAge time.Duration `default:"30m"`
+	// PoolTimeout is the timeout for getting a connection from the pool.
+	PoolTimeout time.Duration `default:"4s"`
+	// IdleTimeout is the timeout for idle connections.
+	IdleTimeout time.Duration `default:"5m"`
+	// IdleCheckFrequency is the frequency of idle checks.
+	IdleCheckFrequency time.Duration `default:"1m"`
+}
+
 // Config is the configuration for the WPgx.
 // Note: for backward compatibility, connection settings of the primary instance are kept in the root Config,
 // creating a bit code duplication with ReadReplicaConfig.
@@ -58,6 +80,9 @@ type Config struct {
 	ReplicaPrefixes []string `default:""`
 	// ReadReplicas is a list of read replicas, parsed from ReplicaNames.
 	ReadReplicas []ReadReplicaConfig `ignored:"true"`
+
+	// Redis configuration
+	Redis RedisConfig `default:""`
 }
 
 func (c *Config) Valid() error {
@@ -86,6 +111,21 @@ func (c *Config) Valid() error {
 		}
 		showedNames[replica.Name] = true
 	}
+
+	// Validate Redis configuration
+	if c.Redis.PoolSize <= 0 {
+		return fmt.Errorf("Redis PoolSize must be > 0, got: %d", c.Redis.PoolSize)
+	}
+	if c.Redis.MinIdleConns < 0 {
+		return fmt.Errorf("Redis MinIdleConns must be >= 0, got: %d", c.Redis.MinIdleConns)
+	}
+	if c.Redis.MinIdleConns > c.Redis.PoolSize {
+		return fmt.Errorf("Redis MinIdleConns must <= PoolSize, got: %d > %d", c.Redis.MinIdleConns, c.Redis.PoolSize)
+	}
+	if c.Redis.MaxRetries < 0 {
+		return fmt.Errorf("Redis MaxRetries must be >= 0, got: %d", c.Redis.MaxRetries)
+	}
+
 	return nil
 }
 
@@ -99,6 +139,9 @@ func (c *Config) String() string {
 	}
 	for i := range copy.ReadReplicas {
 		copy.ReadReplicas[i].Password = "*hidden*"
+	}
+	if len(copy.Redis.Password) > 0 {
+		copy.Redis.Password = "*hidden*"
 	}
 	return fmt.Sprintf("%+v", copy)
 }
