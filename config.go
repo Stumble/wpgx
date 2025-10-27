@@ -112,18 +112,20 @@ func (c *Config) Valid() error {
 		showedNames[replica.Name] = true
 	}
 
-	// Validate Redis configuration
-	if c.Redis.PoolSize <= 0 {
-		return fmt.Errorf("Redis PoolSize must be > 0, got: %d", c.Redis.PoolSize)
-	}
-	if c.Redis.MinIdleConns < 0 {
-		return fmt.Errorf("Redis MinIdleConns must be >= 0, got: %d", c.Redis.MinIdleConns)
-	}
-	if c.Redis.MinIdleConns > c.Redis.PoolSize {
-		return fmt.Errorf("Redis MinIdleConns must <= PoolSize, got: %d > %d", c.Redis.MinIdleConns, c.Redis.PoolSize)
-	}
-	if c.Redis.MaxRetries < 0 {
-		return fmt.Errorf("Redis MaxRetries must be >= 0, got: %d", c.Redis.MaxRetries)
+	// Validate Redis configuration only if Redis is configured
+	if c.Redis.Host != "" || c.Redis.Port != 0 {
+		if c.Redis.PoolSize <= 0 {
+			return fmt.Errorf("Redis PoolSize must be > 0, got: %d", c.Redis.PoolSize)
+		}
+		if c.Redis.MinIdleConns < 0 {
+			return fmt.Errorf("Redis MinIdleConns must be >= 0, got: %d", c.Redis.MinIdleConns)
+		}
+		if c.Redis.MinIdleConns > c.Redis.PoolSize {
+			return fmt.Errorf("Redis MinIdleConns must <= PoolSize, got: %d > %d", c.Redis.MinIdleConns, c.Redis.PoolSize)
+		}
+		if c.Redis.MaxRetries < 0 {
+			return fmt.Errorf("Redis MaxRetries must be >= 0, got: %d", c.Redis.MaxRetries)
+		}
 	}
 
 	return nil

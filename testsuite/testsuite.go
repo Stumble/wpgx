@@ -238,17 +238,44 @@ func (suite *WPgxTestSuite) setupRedis(ctx context.Context) {
 		return
 	}
 
-	redisConfig := &redis.Options{
-		Addr:         fmt.Sprintf("%s:%d", suite.Config.Redis.Host, suite.Config.Redis.Port),
-		Password:     suite.Config.Redis.Password,
-		DB:           suite.Config.Redis.DB,
-		MaxRetries:   suite.Config.Redis.MaxRetries,
-		PoolSize:     suite.Config.Redis.PoolSize,
-		MinIdleConns: suite.Config.Redis.MinIdleConns,
-		PoolTimeout:  suite.Config.Redis.PoolTimeout,
+	// Check if Redis is configured (non-zero values indicate configuration)
+	redisConfig := suite.Config.Redis
+	if redisConfig.Host == "" && redisConfig.Port == 0 {
+		// Redis not configured, skip setup
+		return
 	}
 
-	suite.Redis = redis.NewClient(redisConfig)
+	// Set default values if not specified
+	if redisConfig.Host == "" {
+		redisConfig.Host = "localhost"
+	}
+	if redisConfig.Port == 0 {
+		redisConfig.Port = 6379
+	}
+	if redisConfig.PoolSize == 0 {
+		redisConfig.PoolSize = 10
+	}
+	if redisConfig.MinIdleConns == 0 {
+		redisConfig.MinIdleConns = 5
+	}
+	if redisConfig.MaxRetries == 0 {
+		redisConfig.MaxRetries = 3
+	}
+	if redisConfig.PoolTimeout == 0 {
+		redisConfig.PoolTimeout = 4 * time.Second
+	}
+
+	clientConfig := &redis.Options{
+		Addr:         fmt.Sprintf("%s:%d", redisConfig.Host, redisConfig.Port),
+		Password:     redisConfig.Password,
+		DB:           redisConfig.DB,
+		MaxRetries:   redisConfig.MaxRetries,
+		PoolSize:     redisConfig.PoolSize,
+		MinIdleConns: redisConfig.MinIdleConns,
+		PoolTimeout:  redisConfig.PoolTimeout,
+	}
+
+	suite.Redis = redis.NewClient(clientConfig)
 
 	// Test the connection
 	_, err := suite.Redis.Ping(ctx).Result()
@@ -256,11 +283,13 @@ func (suite *WPgxTestSuite) setupRedis(ctx context.Context) {
 }
 
 // GetRedis returns the Redis client
+// Returns nil if Redis is not configured or not connected
 func (suite *WPgxTestSuite) GetRedis() *redis.Client {
 	return suite.Redis
 }
 
 // ClearRedis clears all keys from the current Redis database
+// Does nothing if Redis is not configured or not connected
 func (suite *WPgxTestSuite) ClearRedis(ctx context.Context) {
 	if suite.Redis != nil {
 		suite.Redis.FlushDB(ctx)

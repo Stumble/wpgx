@@ -2,9 +2,24 @@
 
 ## Overview
 
-wpgx testsuite now supports Redis configuration, allowing you to use both PostgreSQL and Redis in your tests.
+wpgx testsuite now supports optional Redis configuration, allowing you to use both PostgreSQL and Redis in your tests. Redis configuration is completely optional - if not configured, tests will run with PostgreSQL only.
 
 ## Configuration
+
+### Using Docker Container
+
+For testing purposes, you can easily start Redis using Docker:
+
+```bash
+# Start Redis container
+docker run -d --name redis-test -p 6379:6379 redis:7-alpine
+
+# Or with custom configuration
+docker run -d --name redis-test -p 6379:6379 redis:7-alpine redis-server --appendonly yes
+
+# Stop and remove container when done
+docker stop redis-test && docker rm redis-test
+```
 
 ### Environment Variable Configuration
 
@@ -32,6 +47,7 @@ export POSTGRES_REDIS_POOLTIMEOUT="4s"
 
 ### Code Configuration
 
+**With Redis (optional):**
 ```go
 config := &wpgx.Config{
     Username:        "postgres",
@@ -59,7 +75,84 @@ config := &wpgx.Config{
 }
 ```
 
+**Without Redis (PostgreSQL only):**
+```go
+config := &wpgx.Config{
+    Username:        "postgres",
+    Password:        "my-secret",
+    Host:            "localhost",
+    Port:            5432,
+    DBName:          "test_db",
+    MaxConns:        100,
+    MinConns:        0,
+    MaxConnLifetime: 6 * time.Hour,
+    MaxConnIdleTime: 1 * time.Minute,
+    EnablePrometheus: true,
+    EnableTracing:   true,
+    AppName:         "test_app",
+    // Redis config is not set (zero values) - Redis will be disabled
+    Redis: wpgx.RedisConfig{},
+}
+```
+
 ## Usage Examples
+
+### Using with Docker Compose
+
+For a complete testing environment, you can use Docker Compose to run both PostgreSQL and Redis:
+
+```yaml
+# docker-compose.test.yml
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: my-secret
+      POSTGRES_DB: test_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
+```
+
+```bash
+# Start services
+docker-compose -f docker-compose.test.yml up -d
+
+# Run tests
+POSTGRES_APPNAME=test go test ./...
+
+# Stop services
+docker-compose -f docker-compose.test.yml down
+```
+
+**Quick Start Script**: You can also use the provided script to start the test environment:
+
+```bash
+# Make script executable (first time only)
+chmod +x start-test-env.sh
+
+# Start test environment
+./start-test-env.sh
+
+# Run tests
+POSTGRES_APPNAME=test go test ./...
+
+# Stop environment
+docker-compose -f docker-compose.test.yml down
+```
 
 ### Basic Usage
 
@@ -151,12 +244,25 @@ func (suite *myTestSuite) TestDatabaseRedisIntegration() {
 
 The testsuite provides the following Redis-related methods:
 
-- `GetRedis()` - Get Redis client
-- `ClearRedis(ctx)` - Clear all keys from the current Redis database
+- `GetRedis()` - Get Redis client (returns `nil` if Redis is not configured)
+- `ClearRedis(ctx)` - Clear all keys from the current Redis database (does nothing if Redis is not configured)
 
 ## Notes
 
-1. Ensure Redis server is running
-2. Tests automatically clear Redis database to avoid interference between tests
-3. You can isolate different tests by configuring different Redis database numbers
-4. All Redis operations support timeout control
+1. **Optional Redis**: Redis configuration is completely optional. If not configured (zero values), tests will run with PostgreSQL only and `GetRedis()` will return `nil`.
+2. **Redis Server**: When using Redis, ensure Redis server is running. You can use:
+   - Docker: `docker run -d --name redis-test -p 6379:6379 redis:7-alpine`
+   - Docker Compose: See the example above
+   - Local installation: Install Redis locally and start the service
+3. **Test Isolation**: Tests automatically clear Redis database to avoid interference between tests
+4. **Database Isolation**: You can isolate different tests by configuring different Redis database numbers
+5. **Timeout Control**: All Redis operations support timeout control
+6. **Safe Redis Methods**: `GetRedis()` and `ClearRedis()` are safe to call even when Redis is not configured
+7. **Container Management**: When using containers, remember to stop them after testing:
+   ```bash
+   # For Docker
+   docker stop redis-test && docker rm redis-test
+   
+   # For Docker Compose
+   docker-compose -f docker-compose.test.yml down
+   ```
