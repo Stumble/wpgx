@@ -44,42 +44,45 @@ var update = flag.Bool("update", false, "update .golden files")
 
 type WPgxTestSuite struct {
 	suite.Suite
-	Testdb            string
 	Tables            []string
-	Config            *wpgx.Config
+	config            *wpgx.Config
 	Pool              *wpgx.Pool
 	postgresContainer *postgres.PostgresContainer
 	useContainer      bool
 }
 
-// NewWPgxTestSuiteFromEnv @p db is the name of test db and tables are table creation
-// SQL statements. DB will be created, so does tables, on SetupTest.
-// If you pass different @p db for suites in different packages, you can test them in parallel.
-//
+// NewWPgxTestSuiteFromEnv tables are table creation SQL statements. config.DBName will be created, so does tables, on SetupTest.
 // Use environment variable USE_TEST_CONTAINERS=true to enable testcontainers mode.
 // Otherwise, it will use direct connection mode (requires a running PostgreSQL instance).
-func NewWPgxTestSuiteFromEnv(db string, tables []string) *WPgxTestSuite {
+//
+// NOTE: if you use the testcontainers mode, you MUST use the Config() method to get the updated config
+// and create a new pool with it after SetupTest.
+func NewWPgxTestSuiteFromEnv(tables []string) *WPgxTestSuite {
 	useContainer := os.Getenv("USE_TEST_CONTAINERS") == "true"
 	if os.Getenv("POSTGRES_APPNAME") == "" {
 		os.Setenv("POSTGRES_APPNAME", "WPgxTestSuite")
 		defer os.Unsetenv("POSTGRES_APPNAME")
 	}
 	config := wpgx.ConfigFromEnv()
-	config.DBName = db
-	return NewWPgxTestSuiteFromConfig(config, db, tables, useContainer)
+	return NewWPgxTestSuiteFromConfig(config, tables, useContainer)
 }
 
 // NewWPgxTestSuiteFromConfig connect to PostgreSQL Server according to @p config,
-// @p db is the name of test db and tables are table creation
-// SQL statements. DB will be created, so does tables, on SetupTest.
-// If you pass different @p db for suites in different packages, you can test them in parallel.
-func NewWPgxTestSuiteFromConfig(config *wpgx.Config, db string, tables []string, useContainer bool) *WPgxTestSuite {
+// tables are table creation SQL statements. config.DBName will be created, so does tables, on SetupTest.
+// NOTE: if you use the testcontainers mode, you MUST use the Config() method to get the updated config
+// and create a new pool with it after SetupTest.
+func NewWPgxTestSuiteFromConfig(config *wpgx.Config, tables []string, useContainer bool) *WPgxTestSuite {
 	return &WPgxTestSuite{
-		Testdb:       db,
 		Tables:       tables,
-		Config:       config,
+		config:       config,
 		useContainer: useContainer,
 	}
+}
+
+// Config returns the updated config. You MUST use this new config to create pools if you
+// use the testcontainers mode. The host and port are updated to the container's host and port.
+func (suite *WPgxTestSuite) Config() wpgx.Config {
+	return *suite.config
 }
 
 // GetRawPool returns a raw *pgx.Pool.
@@ -115,9 +118,9 @@ func (suite *WPgxTestSuite) setupWithContainer() {
 	// The default testcontainers credentials (test/test) can have authentication issues.
 	container, err := postgres.Run(ctx,
 		defaultPostgresImage,
-		postgres.WithDatabase(suite.Testdb),
-		postgres.WithUsername(suite.Config.Username),
-		postgres.WithPassword(suite.Config.Password),
+		postgres.WithDatabase(suite.config.DBName),
+		postgres.WithUsername(suite.config.Username),
+		postgres.WithPassword(suite.config.Password),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(logOccurrenceCount).
@@ -136,12 +139,11 @@ func (suite *WPgxTestSuite) setupWithContainer() {
 	port, err := container.MappedPort(ctx, "5432")
 	suite.Require().NoError(err, "failed to get container port")
 
-	suite.Config.Host = host
-	suite.Config.Port = port.Int()
-	suite.Config.DBName = suite.Testdb
+	suite.config.Host = host
+	suite.config.Port = port.Int()
 
 	// Create pool
-	pool, err := wpgx.NewPool(context.Background(), suite.Config)
+	pool, err := wpgx.NewPool(context.Background(), suite.config)
 	suite.Require().NoError(err, "wpgx NewPool failed, connStr: %s", connStr)
 	suite.Pool = pool
 	suite.Require().NoError(suite.Pool.Ping(context.Background()), "wpgx ping failed")
@@ -168,16 +170,16 @@ func (suite *WPgxTestSuite) setupWithDirectConnection() {
 	// create DB
 	conn, err := pgx.Connect(context.Background(), fmt.Sprintf(
 		"postgres://%s:%s@%s:%d",
-		suite.Config.Username, suite.Config.Password, suite.Config.Host, suite.Config.Port))
+		suite.config.Username, suite.config.Password, suite.config.Host, suite.config.Port))
 	suite.Require().NoError(err, "failed to connect to pg")
 	defer conn.Close(context.Background())
-	_, err = conn.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE);", suite.Testdb))
+	_, err = conn.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE);", suite.config.DBName))
 	suite.Require().NoError(err, "failed to drop DB")
-	_, err = conn.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s;", suite.Testdb))
+	_, err = conn.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s;", suite.config.DBName))
 	suite.Require().NoError(err, "failed to create DB")
 
 	// create manager
-	pool, err := wpgx.NewPool(context.Background(), suite.Config)
+	pool, err := wpgx.NewPool(context.Background(), suite.config)
 	suite.Require().NoError(err, "wgpx NewPool failed")
 	suite.Pool = pool
 	suite.Require().NoError(suite.Pool.Ping(context.Background()), "wpgx ping failed")

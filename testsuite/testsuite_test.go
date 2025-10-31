@@ -107,17 +107,19 @@ func (m *loaderDumper) Load(data []byte) error {
 }
 
 func NewMetaTestSuite() *metaTestSuite {
+	config := wpgx.ConfigFromEnv()
+	config.DBName = "metatestdb"
 	return &metaTestSuite{
-		WPgxTestSuite: sqlsuite.NewWPgxTestSuiteFromEnv("metatestdb", []string{
+		WPgxTestSuite: sqlsuite.NewWPgxTestSuiteFromConfig(config, []string{
 			`CREATE TABLE IF NOT EXISTS docs (
-               id          INT NOT NULL,
-               rev         DOUBLE PRECISION NOT NULL,
-               content     VARCHAR(200) NOT NULL,
-               created_at  TIMESTAMPTZ NOT NULL,
-               description JSON NOT NULL,
-               PRIMARY KEY(id)
-             );`,
-		}),
+              id          INT NOT NULL,
+              rev         DOUBLE PRECISION NOT NULL,
+              content     VARCHAR(200) NOT NULL,
+              created_at  TIMESTAMPTZ NOT NULL,
+              description JSON NOT NULL,
+              PRIMARY KEY(id)
+            );`,
+		}, os.Getenv("USE_TEST_CONTAINERS") == "true"),
 	}
 }
 
@@ -393,7 +395,7 @@ func NewContainerTestSuite() *containerTestSuite {
 	config := wpgx.ConfigFromEnv()
 	config.DBName = "containertestdb"
 	return &containerTestSuite{
-		WPgxTestSuite: sqlsuite.NewWPgxTestSuiteFromConfig(config, "containertestdb", []string{
+		WPgxTestSuite: sqlsuite.NewWPgxTestSuiteFromConfig(config, []string{
 			`CREATE TABLE IF NOT EXISTS test_table (
 				id INT NOT NULL PRIMARY KEY,
 				name VARCHAR(100) NOT NULL
