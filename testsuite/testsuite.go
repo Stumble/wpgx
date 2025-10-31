@@ -36,8 +36,6 @@ const (
 
 	// Container configuration constants
 	defaultPostgresImage    = "postgres:14.5"
-	defaultPostgresUser     = "postgres"
-	defaultPostgresPassword = "my-secret"
 	containerStartupTimeout = 60 * time.Second
 	logOccurrenceCount      = 2
 )
@@ -140,8 +138,6 @@ func (suite *WPgxTestSuite) setupWithContainer() {
 
 	suite.Config.Host = host
 	suite.Config.Port = port.Int()
-	suite.Config.Username = defaultPostgresUser
-	suite.Config.Password = defaultPostgresPassword
 	suite.Config.DBName = suite.Testdb
 
 	// Create pool
