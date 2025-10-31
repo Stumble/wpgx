@@ -2,11 +2,13 @@ package examples
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/stumble/wpgx"
 	"github.com/stumble/wpgx/testsuite"
 )
 
@@ -20,15 +22,17 @@ type ExampleTestSuite struct {
 // - true: Uses testcontainers to automatically start PostgreSQL container
 // - false or unset: Uses direct connection mode (requires pre-started PostgreSQL)
 func NewExampleTestSuite() *ExampleTestSuite {
+	config := wpgx.ConfigFromEnv()
+	config.DBName = "example_test_db"
 	return &ExampleTestSuite{
-		WPgxTestSuite: testsuite.NewWPgxTestSuiteFromEnv("example_test_db", []string{
+		WPgxTestSuite: testsuite.NewWPgxTestSuiteFromConfig(config, []string{
 			`CREATE TABLE IF NOT EXISTS users (
-               id          INT PRIMARY KEY,
-               name        VARCHAR(100) NOT NULL,
-               email       VARCHAR(100) NOT NULL,
-               created_at  TIMESTAMPTZ NOT NULL
-             );`,
-		}),
+              id          INT PRIMARY KEY,
+              name        VARCHAR(100) NOT NULL,
+              email       VARCHAR(100) NOT NULL,
+              created_at  TIMESTAMPTZ NOT NULL
+            );`,
+		}, os.Getenv("USE_TEST_CONTAINERS") == "true"),
 	}
 }
 
@@ -75,9 +79,10 @@ func (suite *ExampleTestSuite) TestInsertAndQuery() {
 // TestUsingContainerInfo demonstrates how to access connection information in tests
 func (suite *ExampleTestSuite) TestUsingContainerInfo() {
 	// In container mode, Config is automatically updated with container connection details
-	suite.T().Logf("PostgreSQL Host: %s", suite.Config.Host)
-	suite.T().Logf("PostgreSQL Port: %d", suite.Config.Port)
-	suite.T().Logf("Database Name: %s", suite.Config.DBName)
+	config := suite.Config()
+	suite.T().Logf("PostgreSQL Host: %s", config.Host)
+	suite.T().Logf("PostgreSQL Port: %d", config.Port)
+	suite.T().Logf("Database Name: %s", config.DBName)
 
 	// Verify database connectivity
 	err := suite.Pool.Ping(context.Background())
