@@ -339,31 +339,31 @@ func (suite *metaTestSuite) TestDumpState() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	exec := suite.Pool.WConn()
-	
+
 	// Clear any existing data first
 	_, err := exec.WExec(ctx, "delete_for_dump",
 		"DELETE FROM docs WHERE id = $1", 99)
 	suite.Require().NoError(err)
-	
+
 	// Insert some test data
 	_, err = exec.WExec(ctx,
 		"insert_for_dump",
 		"INSERT INTO docs (id, rev, content, created_at, description) VALUES ($1,$2,$3,$4,$5)",
 		99, 123.456, "test dump", time.Unix(2000, 0), json.RawMessage(`{"test":true}`))
 	suite.Require().NoError(err)
-	
+
 	// Dump state to file
 	dumper := &loaderDumper{exec: exec}
 	suite.DumpState("TestDumpState.docs.json", dumper)
-	
+
 	// Verify file was created by loading it back (but clear first)
 	_, err = exec.WExec(ctx, "delete_before_load",
 		"DELETE FROM docs WHERE id = $1", 99)
 	suite.Require().NoError(err)
-	
+
 	loader := &loaderDumper{exec: exec}
 	suite.LoadState("TestDumpState.docs.json", loader)
-	
+
 	// Verify data was loaded correctly
 	rows, err := exec.WQuery(ctx, "verify_dump",
 		"SELECT id, content FROM docs WHERE id = $1", 99)
@@ -389,7 +389,7 @@ func NewContainerTestSuite() *containerTestSuite {
 	// Set POSTGRES_APPNAME before calling ConfigFromEnv
 	os.Setenv("POSTGRES_APPNAME", "ContainerTestSuite")
 	defer os.Unsetenv("POSTGRES_APPNAME")
-	
+
 	config := wpgx.ConfigFromEnv()
 	config.DBName = "containertestdb"
 	return &containerTestSuite{
@@ -416,7 +416,7 @@ func (suite *containerTestSuite) TestContainerSetup() {
 	suite.NotNil(suite.Pool)
 	err := suite.Pool.Ping(context.Background())
 	suite.NoError(err)
-	
+
 	// Verify we can use the pool
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -430,12 +430,12 @@ func (suite *containerTestSuite) TestContainerSetup() {
 func (suite *containerTestSuite) TestContainerTeardown() {
 	// Setup creates a container
 	suite.NotNil(suite.Pool)
-	
+
 	// TearDown should clean up the container without panicking
 	// This verifies the container cleanup path in TearDownTest()
 	// Note: Pool.Close() is called but Pool is not set to nil, so we just verify no panic
 	suite.TearDownTest()
-	
+
 	// Verify teardown completed successfully (no panic)
 	// The pool is closed but not set to nil in TearDownTest
 	suite.NotPanics(func() {
@@ -459,16 +459,16 @@ func (suite *metaTestSuite) TestEnsureDirErrorPath() {
 func (suite *containerTestSuite) TestTearDownTestErrorHandling() {
 	// Setup creates a container
 	suite.NotNil(suite.Pool)
-	
+
 	// First teardown should succeed
 	suite.TearDownTest()
-	
+
 	// Second teardown should handle the case where container is already nil
 	// This tests the if suite.postgresContainer != nil check
 	suite.NotPanics(func() {
 		suite.TearDownTest()
 	})
-	
+
 	// Also test the case where Pool is nil
 	suite.Pool = nil
 	suite.NotPanics(func() {
