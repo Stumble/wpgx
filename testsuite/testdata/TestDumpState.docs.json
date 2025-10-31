@@ -1,0 +1,11 @@
+[
+  {
+    "id": 99,
+    "rev": 123.456,
+    "content": "test dump",
+    "created_at": "1970-01-01T00:33:20Z",
+    "description": {
+      "test": true
+    }
+  }
+]
