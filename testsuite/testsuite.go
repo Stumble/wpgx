@@ -36,8 +36,6 @@ const (
 
 	// Container configuration constants
 	defaultPostgresImage    = "postgres:14.5"
-	defaultPostgresUser     = "postgres"
-	defaultPostgresPassword = "my-secret"
 	containerStartupTimeout = 60 * time.Second
 	logOccurrenceCount      = 2
 )
@@ -62,6 +60,10 @@ type WPgxTestSuite struct {
 // Otherwise, it will use direct connection mode (requires a running PostgreSQL instance).
 func NewWPgxTestSuiteFromEnv(db string, tables []string) *WPgxTestSuite {
 	useContainer := os.Getenv("USE_TEST_CONTAINERS") == "true"
+	if os.Getenv("POSTGRES_APPNAME") == "" {
+		os.Setenv("POSTGRES_APPNAME", "WPgxTestSuite")
+		defer os.Unsetenv("POSTGRES_APPNAME")
+	}
 	config := wpgx.ConfigFromEnv()
 	config.DBName = db
 	return NewWPgxTestSuiteFromConfig(config, db, tables, useContainer)
@@ -114,8 +116,8 @@ func (suite *WPgxTestSuite) setupWithContainer() {
 	container, err := postgres.Run(ctx,
 		defaultPostgresImage,
 		postgres.WithDatabase(suite.Testdb),
-		postgres.WithUsername(defaultPostgresUser),
-		postgres.WithPassword(defaultPostgresPassword),
+		postgres.WithUsername(suite.Config.Username),
+		postgres.WithPassword(suite.Config.Password),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(logOccurrenceCount).
@@ -136,8 +138,6 @@ func (suite *WPgxTestSuite) setupWithContainer() {
 
 	suite.Config.Host = host
 	suite.Config.Port = port.Int()
-	suite.Config.Username = defaultPostgresUser
-	suite.Config.Password = defaultPostgresPassword
 	suite.Config.DBName = suite.Testdb
 
 	// Create pool
