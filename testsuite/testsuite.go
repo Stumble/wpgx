@@ -62,6 +62,10 @@ type WPgxTestSuite struct {
 // Otherwise, it will use direct connection mode (requires a running PostgreSQL instance).
 func NewWPgxTestSuiteFromEnv(db string, tables []string) *WPgxTestSuite {
 	useContainer := os.Getenv("USE_TEST_CONTAINERS") == "true"
+	if os.Getenv("POSTGRES_APPNAME") == "" {
+		os.Setenv("POSTGRES_APPNAME", "WPgxTestSuite")
+		defer os.Unsetenv("POSTGRES_APPNAME")
+	}
 	config := wpgx.ConfigFromEnv()
 	config.DBName = db
 	return NewWPgxTestSuiteFromConfig(config, db, tables, useContainer)
@@ -114,8 +118,8 @@ func (suite *WPgxTestSuite) setupWithContainer() {
 	container, err := postgres.Run(ctx,
 		defaultPostgresImage,
 		postgres.WithDatabase(suite.Testdb),
-		postgres.WithUsername(defaultPostgresUser),
-		postgres.WithPassword(defaultPostgresPassword),
+		postgres.WithUsername(suite.Config.Username),
+		postgres.WithPassword(suite.Config.Password),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(logOccurrenceCount).
