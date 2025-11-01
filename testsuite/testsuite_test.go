@@ -3,7 +3,6 @@ package testsuite_test
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"testing"
 	"time"
 
@@ -107,10 +106,8 @@ func (m *loaderDumper) Load(data []byte) error {
 }
 
 func NewMetaTestSuite() *metaTestSuite {
-	config := wpgx.ConfigFromEnv()
-	config.DBName = "metatestdb"
 	return &metaTestSuite{
-		WPgxTestSuite: sqlsuite.NewWPgxTestSuiteFromConfig(config, []string{
+		WPgxTestSuite: sqlsuite.NewWPgxTestSuiteFromEnv([]string{
 			`CREATE TABLE IF NOT EXISTS docs (
               id          INT NOT NULL,
               rev         DOUBLE PRECISION NOT NULL,
@@ -119,7 +116,7 @@ func NewMetaTestSuite() *metaTestSuite {
               description JSON NOT NULL,
               PRIMARY KEY(id)
             );`,
-		}, os.Getenv("USE_TEST_CONTAINERS") == "true"),
+		}),
 	}
 }
 
@@ -386,21 +383,14 @@ type containerTestSuite struct {
 }
 
 func NewContainerTestSuite() *containerTestSuite {
-	// Use container mode by passing useContainer=true directly
-	// This tests the setupWithContainer() path
-	// Set POSTGRES_APPNAME before calling ConfigFromEnv
-	os.Setenv("POSTGRES_APPNAME", "ContainerTestSuite")
-	defer os.Unsetenv("POSTGRES_APPNAME")
-
-	config := wpgx.ConfigFromEnv()
-	config.DBName = "containertestdb"
+	// use default tc mode.
 	return &containerTestSuite{
-		WPgxTestSuite: sqlsuite.NewWPgxTestSuiteFromConfig(config, []string{
+		WPgxTestSuite: sqlsuite.NewWPgxTestSuiteTcDefault([]string{
 			`CREATE TABLE IF NOT EXISTS test_table (
 				id INT NOT NULL PRIMARY KEY,
 				name VARCHAR(100) NOT NULL
 			);`,
-		}, true), // useContainer = true
+		}),
 	}
 }
 
@@ -445,17 +435,6 @@ func (suite *containerTestSuite) TestContainerTeardown() {
 	})
 }
 
-// TestEnsureDirErrorPath tests ensureDir() error path when directory creation fails
-// This tests the else branch in ensureDir (line 312)
-func (suite *metaTestSuite) TestEnsureDirErrorPath() {
-	// This test exercises ensureDir indirectly through writeFile
-	// We can't easily test the error path without causing actual filesystem errors,
-	// but we can verify that ensureDir is called through writeFile/DumpState
-	// which we already test in TestDumpState
-	// The error path is difficult to test without mocking os.MkdirAll
-	// For now, we rely on the fact that ensureDir is called and works in normal cases
-}
-
 // TestTearDownTestErrorHandling tests the error handling path in TearDownTest
 // This tests the case where container termination might fail (line 199-200)
 func (suite *containerTestSuite) TestTearDownTestErrorHandling() {
@@ -476,4 +455,426 @@ func (suite *containerTestSuite) TestTearDownTestErrorHandling() {
 	suite.NotPanics(func() {
 		suite.TearDownTest()
 	})
+}
+
+// dataIsolationTestSuite tests that data doesn't leak between tests
+// Each test in this suite inserts data with a specific ID and verifies
+// that no other data exists, proving database isolation between tests
+type dataIsolationTestSuite struct {
+	*sqlsuite.WPgxTestSuite
+}
+
+func NewDataIsolationTestSuite() *dataIsolationTestSuite {
+	return &dataIsolationTestSuite{
+		WPgxTestSuite: sqlsuite.NewWPgxTestSuiteTcDefault([]string{
+			`CREATE TABLE IF NOT EXISTS isolation_test (
+				id INT NOT NULL PRIMARY KEY,
+				test_name VARCHAR(200) NOT NULL,
+				value VARCHAR(200) NOT NULL
+			);`,
+		}),
+	}
+}
+
+func TestDataIsolationTestSuite(t *testing.T) {
+	suite.Run(t, NewDataIsolationTestSuite())
+}
+
+func (suite *dataIsolationTestSuite) SetupTest() {
+	suite.WPgxTestSuite.SetupTest()
+}
+
+// TestIsolation_FirstTest inserts data with ID 1
+// This test should never see data from other tests
+func (suite *dataIsolationTestSuite) TestIsolation_FirstTest() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	exec := suite.Pool.WConn()
+
+	// Verify table is empty (no leftover data)
+	rows, err := exec.WQuery(ctx, "count_all", "SELECT COUNT(*) FROM isolation_test")
+	suite.Require().NoError(err)
+	defer rows.Close()
+	suite.True(rows.Next())
+	var count int
+	err = rows.Scan(&count)
+	suite.NoError(err)
+	suite.Equal(0, count, "Table should be empty at start of test - found leftover data!")
+
+	// Insert data for this test
+	_, err = exec.WExec(ctx, "insert_test1",
+		"INSERT INTO isolation_test (id, test_name, value) VALUES ($1, $2, $3)",
+		1, "TestIsolation_FirstTest", "first_value")
+	suite.NoError(err)
+
+	// Verify only our data exists
+	rows2, err := exec.WQuery(ctx, "verify_only_our_data",
+		"SELECT COUNT(*) FROM isolation_test WHERE id = 1")
+	suite.Require().NoError(err)
+	defer rows2.Close()
+	suite.True(rows2.Next())
+	err = rows2.Scan(&count)
+	suite.NoError(err)
+	suite.Equal(1, count)
+}
+
+// TestIsolation_SecondTest inserts data with ID 2
+// This test should never see data from TestIsolation_FirstTest
+func (suite *dataIsolationTestSuite) TestIsolation_SecondTest() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	exec := suite.Pool.WConn()
+
+	// Verify table is empty (no leftover data from TestIsolation_FirstTest)
+	rows, err := exec.WQuery(ctx, "count_all", "SELECT COUNT(*) FROM isolation_test")
+	suite.Require().NoError(err)
+	defer rows.Close()
+	suite.True(rows.Next())
+	var count int
+	err = rows.Scan(&count)
+	suite.NoError(err)
+	suite.Equal(0, count, "Table should be empty - no data should leak from other tests!")
+
+	// Specifically verify data from FirstTest doesn't exist
+	rows2, err := exec.WQuery(ctx, "check_id_1",
+		"SELECT COUNT(*) FROM isolation_test WHERE id = 1")
+	suite.Require().NoError(err)
+	defer rows2.Close()
+	suite.True(rows2.Next())
+	err = rows2.Scan(&count)
+	suite.NoError(err)
+	suite.Equal(0, count, "Data from TestIsolation_FirstTest should not exist!")
+
+	// Insert data for this test
+	_, err = exec.WExec(ctx, "insert_test2",
+		"INSERT INTO isolation_test (id, test_name, value) VALUES ($1, $2, $3)",
+		2, "TestIsolation_SecondTest", "second_value")
+	suite.NoError(err)
+}
+
+// TestIsolation_ThirdTest inserts data with ID 3
+// This test should never see data from other tests
+func (suite *dataIsolationTestSuite) TestIsolation_ThirdTest() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	exec := suite.Pool.WConn()
+
+	// Verify table is empty (no leftover data)
+	rows, err := exec.WQuery(ctx, "count_all", "SELECT COUNT(*) FROM isolation_test")
+	suite.Require().NoError(err)
+	defer rows.Close()
+	suite.True(rows.Next())
+	var count int
+	err = rows.Scan(&count)
+	suite.NoError(err)
+	suite.Equal(0, count, "Table should be empty - database should be recreated for each test!")
+
+	// Verify no data from previous tests exists
+	rows2, err := exec.WQuery(ctx, "check_no_previous_data",
+		"SELECT COUNT(*) FROM isolation_test WHERE id IN (1, 2)")
+	suite.Require().NoError(err)
+	defer rows2.Close()
+	suite.True(rows2.Next())
+	err = rows2.Scan(&count)
+	suite.NoError(err)
+	suite.Equal(0, count, "No data from previous tests should exist!")
+
+	// Insert multiple rows for this test
+	_, err = exec.WExec(ctx, "insert_test3_a",
+		"INSERT INTO isolation_test (id, test_name, value) VALUES ($1, $2, $3)",
+		3, "TestIsolation_ThirdTest", "third_value_a")
+	suite.NoError(err)
+
+	_, err = exec.WExec(ctx, "insert_test3_b",
+		"INSERT INTO isolation_test (id, test_name, value) VALUES ($1, $2, $3)",
+		4, "TestIsolation_ThirdTest", "third_value_b")
+	suite.NoError(err)
+
+	// Verify we have exactly 2 rows
+	rows3, err := exec.WQuery(ctx, "count_our_data",
+		"SELECT COUNT(*) FROM isolation_test")
+	suite.Require().NoError(err)
+	defer rows3.Close()
+	suite.True(rows3.Next())
+	err = rows3.Scan(&count)
+	suite.NoError(err)
+	suite.Equal(2, count, "Should have exactly 2 rows from this test only")
+}
+
+// TestIsolation_VerifyCleanState verifies that even after multiple tests,
+// the database is still in a clean state
+func (suite *dataIsolationTestSuite) TestIsolation_VerifyCleanState() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	exec := suite.Pool.WConn()
+
+	// Verify table is empty
+	rows, err := exec.WQuery(ctx, "count_all", "SELECT COUNT(*) FROM isolation_test")
+	suite.Require().NoError(err)
+	defer rows.Close()
+	suite.True(rows.Next())
+	var count int
+	err = rows.Scan(&count)
+	suite.NoError(err)
+	suite.Equal(0, count, "Table should be empty - all previous test data should be gone!")
+
+	// Verify no rows exist at all
+	rows2, err := exec.WQuery(ctx, "select_all", "SELECT id FROM isolation_test")
+	suite.Require().NoError(err)
+	defer rows2.Close()
+	suite.False(rows2.Next(), "No rows should exist in the table")
+}
+
+// TestIsolation_VerifySchemaPresent ensures that while data is cleared,
+// the schema (tables) is properly recreated
+func (suite *dataIsolationTestSuite) TestIsolation_VerifySchemaPresent() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	exec := suite.Pool.WConn()
+
+	// Verify the table exists and has the correct structure
+	rows, err := exec.WQuery(ctx, "check_schema",
+		`SELECT column_name, data_type 
+		 FROM information_schema.columns 
+		 WHERE table_name = 'isolation_test' 
+		 ORDER BY ordinal_position`)
+	suite.Require().NoError(err)
+	defer rows.Close()
+
+	expectedColumns := []struct {
+		name string
+		typ  string
+	}{
+		{"id", "integer"},
+		{"test_name", "character varying"},
+		{"value", "character varying"},
+	}
+
+	i := 0
+	for rows.Next() {
+		var colName, dataType string
+		err = rows.Scan(&colName, &dataType)
+		suite.NoError(err)
+		suite.Less(i, len(expectedColumns), "More columns than expected")
+		suite.Equal(expectedColumns[i].name, colName)
+		suite.Equal(expectedColumns[i].typ, dataType)
+		i++
+	}
+	suite.Equal(len(expectedColumns), i, "Schema should have all expected columns")
+}
+
+// testIsolationSuite tests the NewIsolation functionality
+type testIsolationSuite struct {
+	*sqlsuite.WPgxTestSuite
+}
+
+func NewTestIsolationSuite() *testIsolationSuite {
+	return &testIsolationSuite{
+		WPgxTestSuite: sqlsuite.NewWPgxTestSuiteTcDefault([]string{
+			`CREATE TABLE IF NOT EXISTS isolation_demo (
+				id INT NOT NULL PRIMARY KEY,
+				value VARCHAR(200) NOT NULL
+			);`,
+		}),
+	}
+}
+
+func TestIsolationSuite(t *testing.T) {
+	suite.Run(t, NewTestIsolationSuite())
+}
+
+func (suite *testIsolationSuite) SetupTest() {
+	suite.WPgxTestSuite.SetupTest()
+}
+
+// TestNewIsolation_Basic tests basic NewIsolation functionality
+func (suite *testIsolationSuite) TestNewIsolation_Basic() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Create a new isolation
+	isolation, err := suite.NewIsolation(ctx)
+	suite.Require().NoError(err)
+	suite.NotNil(isolation)
+	defer isolation.Close()
+
+	// Verify we can create a pool for the isolated database
+	pool, err := isolation.NewPool(ctx)
+	suite.Require().NoError(err)
+	suite.NotNil(pool)
+	defer pool.Close()
+
+	// Verify we can ping the pool
+	err = pool.Ping(ctx)
+	suite.NoError(err)
+
+	// Verify table exists by inserting data
+	exec := pool.WConn()
+	_, err = exec.WExec(ctx, "insert_test",
+		"INSERT INTO isolation_demo (id, value) VALUES ($1, $2)", 1, "test_value")
+	suite.NoError(err)
+
+	// Query the data back
+	rows, err := exec.WQuery(ctx, "select_test",
+		"SELECT value FROM isolation_demo WHERE id = $1", 1)
+	suite.Require().NoError(err)
+	defer rows.Close()
+
+	suite.True(rows.Next())
+	var value string
+	err = rows.Scan(&value)
+	suite.NoError(err)
+	suite.Equal("test_value", value)
+}
+
+// TestNewIsolation_MultipleIsolations tests that multiple isolations can coexist
+func (suite *testIsolationSuite) TestNewIsolation_MultipleIsolations() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Create two isolations
+	isolation1, err := suite.NewIsolation(ctx)
+	suite.Require().NoError(err)
+	suite.NotNil(isolation1)
+	defer isolation1.Close()
+
+	isolation2, err := suite.NewIsolation(ctx)
+	suite.Require().NoError(err)
+	suite.NotNil(isolation2)
+	defer isolation2.Close()
+
+	// Verify they have different database names
+	config1 := isolation1.GetConfig()
+	config2 := isolation2.GetConfig()
+	suite.NotEqual(config1.DBName, config2.DBName)
+
+	// Create pools for both
+	pool1, err := isolation1.NewPool(ctx)
+	suite.Require().NoError(err)
+	defer pool1.Close()
+
+	pool2, err := isolation2.NewPool(ctx)
+	suite.Require().NoError(err)
+	defer pool2.Close()
+
+	// Insert different data in each
+	exec1 := pool1.WConn()
+	_, err = exec1.WExec(ctx, "insert_iso1",
+		"INSERT INTO isolation_demo (id, value) VALUES ($1, $2)", 1, "isolation1_value")
+	suite.NoError(err)
+
+	exec2 := pool2.WConn()
+	_, err = exec2.WExec(ctx, "insert_iso2",
+		"INSERT INTO isolation_demo (id, value) VALUES ($1, $2)", 1, "isolation2_value")
+	suite.NoError(err)
+
+	// Verify data is isolated
+	rows1, err := exec1.WQuery(ctx, "select_iso1",
+		"SELECT value FROM isolation_demo WHERE id = $1", 1)
+	suite.Require().NoError(err)
+	defer rows1.Close()
+
+	suite.True(rows1.Next())
+	var value1 string
+	err = rows1.Scan(&value1)
+	suite.NoError(err)
+	suite.Equal("isolation1_value", value1)
+
+	rows2, err := exec2.WQuery(ctx, "select_iso2",
+		"SELECT value FROM isolation_demo WHERE id = $1", 1)
+	suite.Require().NoError(err)
+	defer rows2.Close()
+
+	suite.True(rows2.Next())
+	var value2 string
+	err = rows2.Scan(&value2)
+	suite.NoError(err)
+	suite.Equal("isolation2_value", value2)
+}
+
+// TestNewIsolation_Cleanup tests that cleanup works properly
+func (suite *testIsolationSuite) TestNewIsolation_Cleanup() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Create an isolation
+	isolation, err := suite.NewIsolation(ctx)
+	suite.Require().NoError(err)
+	suite.NotNil(isolation)
+
+	// Get the database name
+	dbName := isolation.GetConfig().DBName
+
+	// Create a pool and verify it works
+	pool, err := isolation.NewPool(ctx)
+	suite.Require().NoError(err)
+
+	// Insert some data to verify database exists
+	exec := pool.WConn()
+	_, err = exec.WExec(ctx, "insert_before_cleanup",
+		"INSERT INTO isolation_demo (id, value) VALUES ($1, $2)", 1, "test")
+	suite.NoError(err)
+	pool.Close()
+
+	// Close the isolation (this should drop the database)
+	isolation.Close()
+
+	// Verify the database no longer exists by querying pg_database
+	mainExec := suite.Pool.WConn()
+	rows, err := mainExec.WQuery(ctx, "check_db_exists",
+		"SELECT COUNT(*) FROM pg_database WHERE datname = $1", dbName)
+	suite.Require().NoError(err)
+	defer rows.Close()
+
+	suite.True(rows.Next())
+	var count int
+	err = rows.Scan(&count)
+	suite.NoError(err)
+	suite.Equal(0, count, "Database %s should be dropped after Close()", dbName)
+}
+
+// TestNewIsolation_MainSuiteUnaffected verifies that the main suite database is not affected
+func (suite *testIsolationSuite) TestNewIsolation_MainSuiteUnaffected() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Insert data in main suite database
+	exec := suite.Pool.WConn()
+	_, err := exec.WExec(ctx, "insert_main",
+		"INSERT INTO isolation_demo (id, value) VALUES ($1, $2)", 1, "main_suite_value")
+	suite.Require().NoError(err)
+
+	// Create an isolation
+	isolation, err := suite.NewIsolation(ctx)
+	suite.Require().NoError(err)
+	suite.NotNil(isolation)
+	defer isolation.Close()
+
+	// Create pool for isolation
+	isolatedPool, err := isolation.NewPool(ctx)
+	suite.Require().NoError(err)
+	defer isolatedPool.Close()
+
+	// Verify isolation database is empty
+	isolatedExec := isolatedPool.WConn()
+	rows, err := isolatedExec.WQuery(ctx, "count_isolated",
+		"SELECT COUNT(*) FROM isolation_demo")
+	suite.Require().NoError(err)
+	defer rows.Close()
+	suite.True(rows.Next())
+	var count int
+	err = rows.Scan(&count)
+	suite.NoError(err)
+	suite.Equal(0, count, "Isolated database should be empty")
+
+	// Verify main suite database still has data
+	rows2, err := exec.WQuery(ctx, "verify_main",
+		"SELECT value FROM isolation_demo WHERE id = $1", 1)
+	suite.Require().NoError(err)
+	defer rows2.Close()
+	suite.True(rows2.Next())
+	var value string
+	err = rows2.Scan(&value)
+	suite.NoError(err)
+	suite.Equal("main_suite_value", value)
 }
