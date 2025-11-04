@@ -45,12 +45,22 @@ type pgxConfig struct {
 }
 
 func newRawPgxPool(ctx context.Context, config *pgxConfig) (*pgxpool.Pool, error) {
-	pgConfig, err := pgxpool.ParseConfig(fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
-		config.Username,
-		config.Password,
-		config.Host,
-		config.Port,
-		config.DBName))
+	var connString string
+	if config.Password != "" {
+		connString = fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
+			config.Username,
+			config.Password,
+			config.Host,
+			config.Port,
+			config.DBName)
+	} else {
+		connString = fmt.Sprintf("postgres://%s@%s:%d/%s?sslmode=disable",
+			config.Username,
+			config.Host,
+			config.Port,
+			config.DBName)
+	}
+	pgConfig, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		return nil, err
 	}
