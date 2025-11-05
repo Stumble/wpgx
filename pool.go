@@ -69,7 +69,9 @@ func newRawPgxPool(ctx context.Context, config *pgxConfig) (*pgxpool.Pool, error
 	pgConfig.MaxConnLifetime = config.MaxConnLifetime
 	pgConfig.MaxConnIdleTime = config.MaxConnIdleTime
 	if config.BeforeAcquire != nil {
-		pgConfig.BeforeAcquire = config.BeforeAcquire
+		pgConfig.PrepareConn = func(ctx context.Context, conn *pgx.Conn) (bool, error) {
+			return config.BeforeAcquire(ctx, conn), nil
+		}
 	}
 	// Use Exec mode for db behind proxy, see:
 	// https://github.com/jackc/pgx/blob/b197994b1f8e803940b05821957fea0ee5f82c04/doc.go#L189
