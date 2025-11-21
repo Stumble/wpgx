@@ -42,23 +42,28 @@ type pgxConfig struct {
 	MaxConnIdleTime time.Duration
 	BeforeAcquire   func(context.Context, *pgx.Conn) bool
 	IsProxy         bool
+	SSLMode         string
 }
 
 func newRawPgxPool(ctx context.Context, config *pgxConfig) (*pgxpool.Pool, error) {
 	var connString string
 	if config.Password != "" {
-		connString = fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
+		connString = fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
 			config.Username,
 			config.Password,
 			config.Host,
 			config.Port,
-			config.DBName)
+			config.DBName,
+			config.SSLMode,
+		)
 	} else {
-		connString = fmt.Sprintf("postgres://%s@%s:%d/%s?sslmode=disable",
+		connString = fmt.Sprintf("postgres://%s@%s:%d/%s?sslmode=%s",
 			config.Username,
 			config.Host,
 			config.Port,
-			config.DBName)
+			config.DBName,
+			config.SSLMode,
+		)
 	}
 	pgConfig, err := pgxpool.ParseConfig(connString)
 	if err != nil {
@@ -99,6 +104,7 @@ func NewPool(ctx context.Context, config *Config) (*Pool, error) {
 		MaxConnIdleTime: config.MaxConnIdleTime,
 		BeforeAcquire:   config.BeforeAcquire,
 		IsProxy:         config.IsProxy,
+		SSLMode:         config.SSLMode,
 	})
 	if err != nil {
 		return nil, err
@@ -125,6 +131,7 @@ func NewPool(ctx context.Context, config *Config) (*Pool, error) {
 			MaxConnIdleTime: replicaConfig.MaxConnIdleTime,
 			BeforeAcquire:   replicaConfig.BeforeAcquire,
 			IsProxy:         replicaConfig.IsProxy,
+			SSLMode:         replicaConfig.SSLMode,
 		})
 		if err != nil {
 			return nil, err

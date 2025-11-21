@@ -30,6 +30,7 @@ type ReadReplicaConfig struct {
 	BeforeAcquire func(context.Context, *pgx.Conn) bool `ignored:"true"`
 	IsProxy       bool                                  `default:"false"`
 	Broken        bool                                  `default:"false"`
+	SSLMode       string                                `default:"disable"`
 }
 
 // Config is the configuration for the WPgx.
@@ -48,6 +49,7 @@ type Config struct {
 	// BeforeAcquire is a function that is called before acquiring a connection.
 	BeforeAcquire func(context.Context, *pgx.Conn) bool `ignored:"true"`
 	IsProxy       bool                                  `default:"false"`
+	SSLMode       string                                `default:"disable"`
 
 	EnablePrometheus bool   `default:"true"`
 	EnableTracing    bool   `default:"true"`
