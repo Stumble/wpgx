@@ -38,6 +38,7 @@ type pgxConfig struct {
 	DBName          string
 	MaxConns        int32
 	MinConns        int32
+	MinIdleConns    int32
 	MaxConnLifetime time.Duration
 	MaxConnIdleTime time.Duration
 	BeforeAcquire   func(context.Context, *pgx.Conn) bool
@@ -71,6 +72,7 @@ func newRawPgxPool(ctx context.Context, config *pgxConfig) (*pgxpool.Pool, error
 	}
 	pgConfig.MaxConns = config.MaxConns
 	pgConfig.MinConns = config.MinConns
+	pgConfig.MinIdleConns = config.MinIdleConns
 	pgConfig.MaxConnLifetime = config.MaxConnLifetime
 	pgConfig.MaxConnIdleTime = config.MaxConnIdleTime
 	if config.BeforeAcquire != nil {
@@ -100,6 +102,7 @@ func NewPool(ctx context.Context, config *Config) (*Pool, error) {
 		DBName:          config.DBName,
 		MaxConns:        config.MaxConns,
 		MinConns:        config.MinConns,
+		MinIdleConns:    config.MinIdleConns,
 		MaxConnLifetime: config.MaxConnLifetime,
 		MaxConnIdleTime: config.MaxConnIdleTime,
 		BeforeAcquire:   config.BeforeAcquire,
@@ -127,6 +130,7 @@ func NewPool(ctx context.Context, config *Config) (*Pool, error) {
 			DBName:          replicaConfig.DBName,
 			MaxConns:        replicaConfig.MaxConns,
 			MinConns:        replicaConfig.MinConns,
+			MinIdleConns:    replicaConfig.MinIdleConns,
 			MaxConnLifetime: replicaConfig.MaxConnLifetime,
 			MaxConnIdleTime: replicaConfig.MaxConnIdleTime,
 			BeforeAcquire:   replicaConfig.BeforeAcquire,

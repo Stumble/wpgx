@@ -50,8 +50,9 @@ const (
 	DefaultHost            = "localhost"
 	DefaultPort            = 5432
 	DefaultDBName          = "wpgx_test_db"
-	DefaultMaxConns        = int32(100)
+	DefaultMaxConns        = int32(20)
 	DefaultMinConns        = int32(0)
+	DefaultMinIdleConns    = int32(0)
 	DefaultMaxConnLifetime = 6 * time.Hour
 	DefaultMaxConnIdleTime = 1 * time.Minute
 	DefaultAppName         = "WPgxTestSuite"
@@ -158,6 +159,7 @@ func NewWPgxTestSuiteTcDefault(tables []string) *WPgxTestSuite {
 		DBName:           DefaultDBName,
 		MaxConns:         DefaultMaxConns,
 		MinConns:         DefaultMinConns,
+		MinIdleConns:     DefaultMinIdleConns,
 		MaxConnLifetime:  DefaultMaxConnLifetime,
 		MaxConnIdleTime:  DefaultMaxConnIdleTime,
 		IsProxy:          false,
