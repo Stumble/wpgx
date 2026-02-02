@@ -22,8 +22,9 @@ type ReadReplicaConfig struct {
 	Host            string        `default:"localhost"`
 	Port            int           `default:"5432"`
 	DBName          string        `default:"wpgx_test_db"`
-	MaxConns        int32         `default:"100"`
+	MaxConns        int32         `default:"20"`
 	MinConns        int32         `default:"0"`
+	MinIdleConns    int32         `default:"0"`
 	MaxConnLifetime time.Duration `default:"6h"`
 	MaxConnIdleTime time.Duration `default:"1m"`
 	// BeforeAcquire is a function that is called before acquiring a connection.
@@ -41,8 +42,9 @@ type Config struct {
 	Host            string        `default:"localhost"`
 	Port            int           `default:"5432"`
 	DBName          string        `default:"wpgx_test_db"`
-	MaxConns        int32         `default:"100"`
+	MaxConns        int32         `default:"20"`
 	MinConns        int32         `default:"0"`
+	MinIdleConns    int32         `default:"0"`
 	MaxConnLifetime time.Duration `default:"6h"`
 	MaxConnIdleTime time.Duration `default:"1m"`
 	// BeforeAcquire is a function that is called before acquiring a connection.
