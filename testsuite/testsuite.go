@@ -86,17 +86,11 @@ type WPgxTestSuite struct {
 // NOTE: if you use the testcontainers mode, the container is started in SetupSuite and terminated in TearDownSuite.
 // You MUST use the GetConfig() method to get the updated config with container connection details after SetupSuite.
 //
-// Deprecated: This function has several limitations:
-//  1. When using direct connection mode (no testcontainers), different packages share the same pg and database,
-//     which means tests must be run with `go test -count=1 -p 1` to avoid conflicts.
-//  2. Managing configs from environment variables is inconvenient - you must either set environment
-//     variables before running tests (using default prefix "postgres"). Additionally, when using
-//     testcontainers mode, you must remember to call GetConfig() after SetupSuite to get the
-//     updated connection details (host/port).
-//  3. For new tests, use NewWPgxTestSuiteTcDefault instead, which creates a dedicated PostgreSQL container
-//     for each test suite, allowing packages to run in parallel without interference.
-//  4. For even more parallelism within a suite, use the NewIsolation() method to create
-//     isolated databases for individual tests.
+// When using direct connection mode (no testcontainers), different packages may share the same pg and database,
+// which means tests must be run with `go test -count=1 -p 1` to avoid conflicts.
+// To avoid this, you can manage PostgreSQL containers at a higher level (e.g. in CI or your own test
+// setup) and pass each suite its own connection config to run in parallel without conflicts.
+// For built-in container support without external setup, see NewWPgxTestSuiteTcDefault.
 func NewWPgxTestSuiteFromEnv(tables []string) *WPgxTestSuite {
 	useContainer := os.Getenv(EnvUseTestContainers) == "true"
 	envKey := strings.ToUpper(fmt.Sprintf("%s_%s", wpgx.DefaultEnvPrefix, "APPNAME"))
@@ -117,16 +111,11 @@ func NewWPgxTestSuiteFromEnv(tables []string) *WPgxTestSuite {
 // NOTE: if you use the testcontainers mode, the container is started in SetupSuite and terminated in TearDownSuite.
 // You MUST use the GetConfig() method to get the updated config with container connection details after SetupSuite.
 //
-// Deprecated: This function has several limitations:
-//  1. When using direct connection mode (no testcontainers), different packages share the same pg and database,
-//     which means tests must be run with `go test -count=1 -p 1` to avoid conflicts.
-//  2. Managing configs manually requires constructing the entire config object before creating the suite.
-//     Additionally, when using testcontainers mode, you must remember to call GetConfig() after
-//     SetupSuite to get the updated connection details (host/port), making it error-prone.
-//  3. For new tests, use NewWPgxTestSuiteTcDefault instead, which creates a dedicated container
-//     for each test suite with sensible defaults, allowing packages to run in parallel without interference.
-//  4. For even more parallelism within a suite, use the NewIsolation() method to create
-//     isolated databases for individual tests.
+// When using direct connection mode (no testcontainers), different test suites may share the same pg and database,
+// which means tests must be run with `go test -count=1 -p 1` to avoid conflicts.
+// To avoid this, you can manage PostgreSQL containers at a higher level (e.g. in CI or your own test
+// setup) and pass each suite its own connection config to run in parallel without conflicts.
+// For built-in container support without external setup, see NewWPgxTestSuiteTcDefault.
 func NewWPgxTestSuiteFromConfig(config *wpgx.Config, tables []string, useContainer bool) *WPgxTestSuite {
 	return &WPgxTestSuite{
 		Tables:       tables,
@@ -136,14 +125,11 @@ func NewWPgxTestSuiteFromConfig(config *wpgx.Config, tables []string, useContain
 }
 
 // NewWPgxTestSuiteTcDefault creates a new WPgxTestSuite with default testcontainers configuration.
-// This is the RECOMMENDED way to create a new WPgxTestSuite since v0.4.
+// This is a convenient way to get a PostgreSQL test suite running without any external setup.
+// Each test suite gets its own dedicated container with sensible defaults.
 //
-// Benefits over deprecated NewWPgxTestSuiteFromEnv/NewWPgxTestSuiteFromConfig:
-//  1. Each test suite gets its own dedicated PostgreSQL container, allowing packages to run
-//     in parallel without conflicts (no need for `go test -count=1 -p 1`).
-//  2. No need to manage environment variables or manually construct configs.
-//  3. No need to call GetConfig() after SetupSuite - the suite handles everything automatically.
-//  4. Sensible defaults are provided for all configuration options.
+// If you prefer managing PostgreSQL test containers at a higher level (e.g. shared across suites
+// or managed by CI), use NewWPgxTestSuiteFromEnv or NewWPgxTestSuiteFromConfig instead.
 //
 // For even more parallelism within a test suite, use the suite's NewIsolation() method to
 // create isolated databases for individual test cases.
