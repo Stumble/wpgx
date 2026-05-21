@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -198,9 +199,11 @@ func (suite *WPgxTestSuite) setupContainer() {
 	suite.Require().NoError(err, "failed to get container host")
 	port, err := container.MappedPort(ctx, "5432")
 	suite.Require().NoError(err, "failed to get container port")
+	portNum, err := strconv.Atoi(port.Port())
+	suite.Require().NoError(err, "failed to parse container port")
 
 	suite.config.Host = host
-	suite.config.Port = port.Int()
+	suite.config.Port = portNum
 }
 
 // SetupSuite runs once before all tests in the suite.
