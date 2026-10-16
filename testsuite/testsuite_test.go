@@ -3,6 +3,7 @@ package testsuite_test
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -422,6 +423,25 @@ func (suite *metaTestSuite) TestClosingAnotherPoolKeepsMetrics() {
 	v, ok := suite.gatheredCounter("wpgx_intent_total", suite.GetConfig().AppName, "after_other_pool_closed")
 	suite.True(ok, "suite pool metrics must still be registered")
 	suite.Equal(1.0, v)
+}
+
+// PostExec may be called from other goroutines while Transact commits.
+func (suite *metaTestSuite) TestPostExecConcurrentWithCommit() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	_, err := suite.Pool.Transact(ctx, pgx.TxOptions{}, func(ctx context.Context, tx *wpgx.WTx) (any, error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				_ = tx.PostExec(func() error { return nil })
+			}
+		}()
+		return nil, nil
+	})
+	wg.Wait()
+	suite.NoError(err)
 }
 
 // uuidValue has the shape of github.com/google/uuid.UUID: a Go type that pgx

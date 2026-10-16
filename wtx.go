@@ -23,8 +23,11 @@ type WTx struct {
 var _ WGConn = (*WTx)(nil)
 
 func (t *WTx) runPostExecFuncs() {
+	t.mutex.Lock()
+	funcs := t.postExecFuncs
+	t.mutex.Unlock()
 	var wg sync.WaitGroup
-	for _, v := range t.postExecFuncs {
+	for _, v := range funcs {
 		wg.Add(1)
 		go func(fn PostExecFunc) {
 			defer wg.Done()
