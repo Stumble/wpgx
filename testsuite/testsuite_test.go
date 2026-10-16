@@ -3,10 +3,12 @@ package testsuite_test
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/stumble/wpgx"
@@ -332,6 +334,114 @@ func (suite *metaTestSuite) TestGetPool() {
 	pool := suite.GetPool()
 	suite.NotNil(pool)
 	suite.Equal(suite.Pool, pool)
+}
+
+// gatheredCounter returns the value of counter @p metric for @p app and @p op in the
+// default Prometheus registry, and whether the series exists.
+func (suite *metaTestSuite) gatheredCounter(metric, app, op string) (float64, bool) {
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	suite.Require().NoError(err)
+	for _, mf := range mfs {
+		if mf.GetName() != metric {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			labels := map[string]string{}
+			for _, l := range m.GetLabel() {
+				labels[l.GetName()] = l.GetValue()
+			}
+			if labels["app"] == app && labels["op"] == op {
+				return m.GetCounter().GetValue(), true
+			}
+		}
+	}
+	return 0, false
+}
+
+// Errors of a query that fails during execution are reported by rows.Err() or
+// Row.Scan, not by Query; they must still be counted as errors.
+func (suite *metaTestSuite) TestErrorsAfterQueryReturnAreCounted() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	app := suite.GetConfig().AppName
+	errorCount := func(op string) float64 {
+		v, _ := suite.gatheredCounter("wpgx_error_total", app, op)
+		return v
+	}
+	readAll := func(conn wpgx.WQuerier, op string) error {
+		rows, err := conn.WQuery(ctx, op, "SELECT 1/0")
+		suite.Require().NoError(err, "pgx reports execution errors through rows")
+		defer rows.Close()
+		for rows.Next() {
+		}
+		return rows.Err()
+	}
+	scanOne := func(conn wpgx.WQuerier, op, query string) error {
+		var n int
+		return conn.WQueryRow(ctx, op, query).Scan(&n)
+	}
+
+	conn := suite.Pool.WConn()
+	suite.Error(readAll(conn, "conn_query_div0"))
+	suite.Equal(1.0, errorCount("conn_query_div0"))
+	suite.Error(scanOne(conn, "conn_row_div0", "SELECT 1/0"))
+	suite.Equal(1.0, errorCount("conn_row_div0"))
+	suite.ErrorIs(scanOne(conn, "conn_row_none", "SELECT 1 WHERE false"), pgx.ErrNoRows)
+	suite.Equal(0.0, errorCount("conn_row_none"), "ErrNoRows is not a failure")
+
+	// Rows closed early without an error are not counted.
+	rows, err := conn.WQuery(ctx, "conn_query_ok", "SELECT generate_series(1, 3)")
+	suite.Require().NoError(err)
+	suite.True(rows.Next())
+	rows.Close()
+	suite.NoError(rows.Err())
+	suite.Equal(0.0, errorCount("conn_query_ok"))
+
+	_, err = suite.Pool.Transact(ctx, pgx.TxOptions{}, func(ctx context.Context, tx *wpgx.WTx) (any, error) {
+		suite.Error(scanOne(tx, "tx_row_div0", "SELECT 1/0"))
+		return nil, nil
+	})
+	suite.Error(err, "the failed statement aborts the transaction")
+	suite.Equal(1.0, errorCount("tx_row_div0"))
+	_, err = suite.Pool.Transact(ctx, pgx.TxOptions{}, func(ctx context.Context, tx *wpgx.WTx) (any, error) {
+		return nil, readAll(tx, "tx_query_div0")
+	})
+	suite.Error(err)
+	suite.Equal(1.0, errorCount("tx_query_div0"))
+}
+
+// A pool created and closed next to the suite's pool, as NewIsolation does, must
+// not unregister the metrics the suite's pool is still recording.
+func (suite *metaTestSuite) TestClosingAnotherPoolKeepsMetrics() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	isolation, err := suite.NewIsolation(ctx)
+	suite.Require().NoError(err)
+	defer isolation.Close()
+
+	suite.Pool.WConn().CountIntent("after_other_pool_closed")
+	v, ok := suite.gatheredCounter("wpgx_intent_total", suite.GetConfig().AppName, "after_other_pool_closed")
+	suite.True(ok, "suite pool metrics must still be registered")
+	suite.Equal(1.0, v)
+}
+
+// PostExec may be called from other goroutines while Transact commits.
+func (suite *metaTestSuite) TestPostExecConcurrentWithCommit() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	_, err := suite.Pool.Transact(ctx, pgx.TxOptions{}, func(ctx context.Context, tx *wpgx.WTx) (any, error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				_ = tx.PostExec(func() error { return nil })
+			}
+		}()
+		return nil, nil
+	})
+	wg.Wait()
+	suite.NoError(err)
 }
 
 // uuidValue has the shape of github.com/google/uuid.UUID: a Go type that pgx

@@ -93,7 +93,8 @@ func newRawPgxPool(ctx context.Context, config *pgxConfig) (*pgxpool.Pool, error
 }
 
 // NewPool creates a new Pool with the given context and config.
-// When the context is canceled, the pool will be closed.
+// The context is only used while creating the underlying pgx pools; canceling it
+// later does not close the Pool, call Close for that.
 func NewPool(ctx context.Context, config *Config) (*Pool, error) {
 	if err := config.Valid(); err != nil {
 		return nil, err
@@ -121,6 +122,14 @@ func NewPool(ctx context.Context, config *Config) (*Pool, error) {
 		pool:         primaryPool,
 		replicaPools: make(map[ReplicaName]*pgxpool.Pool),
 	}
+	closeCreatedPools := func() {
+		for _, pp := range pool.replicaPools {
+			if pp != primaryPool {
+				pp.Close()
+			}
+		}
+		primaryPool.Close()
+	}
 	for _, replicaConfig := range config.ReadReplicas {
 		if replicaConfig.Broken {
 			log.Warn().Msgf("replica %s is broken! Use primary instead.", replicaConfig.Name)
@@ -144,6 +153,7 @@ func NewPool(ctx context.Context, config *Config) (*Pool, error) {
 			SSLMode:         replicaConfig.SSLMode,
 		})
 		if err != nil {
+			closeCreatedPools()
 			return nil, err
 		}
 		pool.replicaPools[replicaConfig.Name] = replicaPool

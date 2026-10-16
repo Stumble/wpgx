@@ -23,8 +23,11 @@ type WTx struct {
 var _ WGConn = (*WTx)(nil)
 
 func (t *WTx) runPostExecFuncs() {
+	t.mutex.Lock()
+	funcs := t.postExecFuncs
+	t.mutex.Unlock()
 	var wg sync.WaitGroup
-	for _, v := range t.postExecFuncs {
+	for _, v := range funcs {
 		wg.Add(1)
 		go func(fn PostExecFunc) {
 			defer wg.Done()
@@ -53,7 +56,7 @@ func (t *WTx) WQuery(ctx context.Context, name string, unprepared string, args .
 		defer t.tracer.TraceEnd(ctx, &err)
 	}
 	rows, err = t.tx.Query(ctx, unprepared, args...)
-	return
+	return observeRows(t.stats, name, nil, rows, err), err
 }
 
 func (t *WTx) WQueryRow(ctx context.Context, name string, unprepared string, args ...interface{}) pgx.Row {
@@ -64,7 +67,7 @@ func (t *WTx) WQueryRow(ctx context.Context, name string, unprepared string, arg
 		ctx = t.tracer.TraceStart(ctx, name, nil)
 		defer t.tracer.TraceEnd(ctx, nil)
 	}
-	return t.tx.QueryRow(ctx, unprepared, args...)
+	return observeRow(t.stats, name, nil, t.tx.QueryRow(ctx, unprepared, args...))
 }
 
 func (t *WTx) WExec(ctx context.Context, name string, unprepared string, args ...interface{}) (cmd pgconn.CommandTag, err error) {

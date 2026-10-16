@@ -31,3 +31,18 @@ func (suite *ConfigTestSuite) TestDefaultConfigParse2Replica() {
 	config := ConfigFromEnv()
 	suite.Equal(2, len(config.ReadReplicas))
 }
+
+func (suite *ConfigTestSuite) TestStringDoesNotMutateConfig() {
+	config := &Config{
+		Password: "primary-secret",
+		AppName:  "test",
+		ReadReplicas: []ReadReplicaConfig{
+			{Name: "r1", Password: "replica-secret"},
+		},
+	}
+	s := config.String()
+	suite.NotContains(s, "primary-secret")
+	suite.NotContains(s, "replica-secret")
+	suite.Equal("primary-secret", config.Password)
+	suite.Equal("replica-secret", config.ReadReplicas[0].Password)
+}

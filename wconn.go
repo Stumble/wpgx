@@ -31,7 +31,7 @@ func (c *WConn) WQuery(ctx context.Context, name string, unprepared string, args
 		defer c.tracer.TraceEnd(ctx, &err)
 	}
 	r, err = c.p.Query(ctx, unprepared, args...)
-	return
+	return observeRows(c.stats, name, c.replicaName, r, err), err
 }
 
 func (c *WConn) WQueryRow(ctx context.Context, name string, unprepared string, args ...interface{}) pgx.Row {
@@ -42,7 +42,7 @@ func (c *WConn) WQueryRow(ctx context.Context, name string, unprepared string, a
 		ctx = c.tracer.TraceStart(ctx, name, c.replicaName)
 		defer c.tracer.TraceEnd(ctx, nil)
 	}
-	return c.p.QueryRow(ctx, unprepared, args...)
+	return observeRow(c.stats, name, c.replicaName, c.p.QueryRow(ctx, unprepared, args...))
 }
 
 func (c *WConn) WExec(ctx context.Context, name string, unprepared string, args ...interface{}) (cmd pgconn.CommandTag, err error) {
