@@ -41,6 +41,7 @@ type pgxConfig struct {
 	MinIdleConns    int32
 	MaxConnLifetime time.Duration
 	MaxConnIdleTime time.Duration
+	AfterConnect    func(context.Context, *pgx.Conn) error
 	BeforeAcquire   func(context.Context, *pgx.Conn) bool
 	IsProxy         bool
 	SSLMode         string
@@ -75,6 +76,7 @@ func newRawPgxPool(ctx context.Context, config *pgxConfig) (*pgxpool.Pool, error
 	pgConfig.MinIdleConns = config.MinIdleConns
 	pgConfig.MaxConnLifetime = config.MaxConnLifetime
 	pgConfig.MaxConnIdleTime = config.MaxConnIdleTime
+	pgConfig.AfterConnect = config.AfterConnect
 	if config.BeforeAcquire != nil {
 		pgConfig.PrepareConn = func(ctx context.Context, conn *pgx.Conn) (bool, error) {
 			return config.BeforeAcquire(ctx, conn), nil
@@ -105,6 +107,7 @@ func NewPool(ctx context.Context, config *Config) (*Pool, error) {
 		MinIdleConns:    config.MinIdleConns,
 		MaxConnLifetime: config.MaxConnLifetime,
 		MaxConnIdleTime: config.MaxConnIdleTime,
+		AfterConnect:    config.AfterConnect,
 		BeforeAcquire:   config.BeforeAcquire,
 		IsProxy:         config.IsProxy,
 		SSLMode:         config.SSLMode,
@@ -133,6 +136,7 @@ func NewPool(ctx context.Context, config *Config) (*Pool, error) {
 			MinIdleConns:    replicaConfig.MinIdleConns,
 			MaxConnLifetime: replicaConfig.MaxConnLifetime,
 			MaxConnIdleTime: replicaConfig.MaxConnIdleTime,
+			AfterConnect:    replicaConfig.AfterConnect,
 			BeforeAcquire:   replicaConfig.BeforeAcquire,
 			IsProxy:         replicaConfig.IsProxy,
 			SSLMode:         replicaConfig.SSLMode,

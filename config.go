@@ -27,6 +27,8 @@ type ReadReplicaConfig struct {
 	MinIdleConns    int32         `default:"0"`
 	MaxConnLifetime time.Duration `default:"6h"`
 	MaxConnIdleTime time.Duration `default:"1m"`
+	// AfterConnect is called once for each new connection, see Config.AfterConnect.
+	AfterConnect func(context.Context, *pgx.Conn) error `ignored:"true"`
 	// BeforeAcquire is a function that is called before acquiring a connection.
 	BeforeAcquire func(context.Context, *pgx.Conn) bool `ignored:"true"`
 	IsProxy       bool                                  `default:"false"`
@@ -48,6 +50,12 @@ type Config struct {
 	MinIdleConns    int32         `default:"0"`
 	MaxConnLifetime time.Duration `default:"6h"`
 	MaxConnIdleTime time.Duration `default:"1m"`
+	// AfterConnect is called once for each new connection, before it is added to
+	// the pool; a returned error discards the connection. Use it for setup that
+	// lasts for the connection's lifetime, such as registering types on
+	// conn.TypeMap(): with IsProxy, pgx encodes a parameter only when its Go type
+	// maps to a PostgreSQL type. Read replicas have their own AfterConnect.
+	AfterConnect func(context.Context, *pgx.Conn) error `ignored:"true"`
 	// BeforeAcquire is a function that is called before acquiring a connection.
 	BeforeAcquire func(context.Context, *pgx.Conn) bool `ignored:"true"`
 	IsProxy       bool                                  `default:"false"`
