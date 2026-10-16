@@ -138,7 +138,7 @@ func (s *metricSet) MakeObserver(name string, replicaName *ReplicaName, startedA
 		}
 		if s.Latency != nil {
 			s.Latency.WithLabelValues(s.AppName, name, toLabel(replicaName)).Observe(
-				float64(time.Since(startedAt).Milliseconds()))
+				float64(time.Since(startedAt))/float64(time.Millisecond))
 		}
 	}
 }

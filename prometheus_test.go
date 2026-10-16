@@ -2,6 +2,7 @@ package wpgx
 
 import (
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
@@ -70,4 +71,39 @@ func TestMetricSetUnregisterDropsOwnConnPoolGauges(t *testing.T) {
 	b.Unregister()
 	require.Equal(t, 1, gatheredSeries(t, "wpgx_conn_pool", "metrics_gauge_a"))
 	require.Equal(t, 0, gatheredSeries(t, "wpgx_conn_pool", "metrics_gauge_b"))
+}
+
+// histogramSum returns the sample count and sum of histogram @p name for app @p app
+// and op @p op in the default registry.
+func histogramSum(t *testing.T, name, app, op string) (uint64, float64) {
+	t.Helper()
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+	for _, mf := range mfs {
+		if mf.GetName() != name {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			labels := map[string]string{}
+			for _, l := range m.GetLabel() {
+				labels[l.GetName()] = l.GetValue()
+			}
+			if labels["app"] == app && labels["op"] == op {
+				return m.GetHistogram().GetSampleCount(), m.GetHistogram().GetSampleSum()
+			}
+		}
+	}
+	return 0, 0
+}
+
+func TestLatencyKeepsSubMillisecondPrecision(t *testing.T) {
+	m := newMetricSet("metrics_latency")
+	m.Register()
+	defer m.Unregister()
+
+	m.MakeObserver("fast", nil, time.Now().Add(-1500*time.Microsecond), nil)()
+	count, sum := histogramSum(t, "wpgx_latency_milliseconds", "metrics_latency", "fast")
+	require.Equal(t, uint64(1), count)
+	require.Greater(t, sum, 1.5, "1.5ms must not be truncated to 1ms")
+	require.Less(t, sum, 1000.0)
 }
