@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/stumble/wpgx"
@@ -331,6 +332,68 @@ func (suite *metaTestSuite) TestGetPool() {
 	pool := suite.GetPool()
 	suite.NotNil(pool)
 	suite.Equal(suite.Pool, pool)
+}
+
+// uuidValue has the shape of github.com/google/uuid.UUID: a Go type that pgx
+// cannot map to a PostgreSQL type by itself.
+type uuidValue [16]byte
+
+func registerUUIDValue(_ context.Context, conn *pgx.Conn) error {
+	conn.TypeMap().RegisterDefaultPgType(uuidValue{}, "uuid")
+	conn.TypeMap().RegisterDefaultPgType([]uuidValue{}, "_uuid")
+	return nil
+}
+
+// Behind a proxy pgx does not describe statements, so it encodes a parameter
+// only when its Go type maps to a PostgreSQL type. AfterConnect registers the
+// mapping on every new connection of the primary and of each replica.
+func (suite *metaTestSuite) TestAfterConnectRegistersTypesBehindProxy() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	replica := wpgx.ReplicaName("replica")
+	newProxyPool := func(afterConnect func(context.Context, *pgx.Conn) error) *wpgx.Pool {
+		config := suite.GetConfig()
+		config.EnablePrometheus = false
+		config.IsProxy = true
+		config.AfterConnect = afterConnect
+		config.ReadReplicas = []wpgx.ReadReplicaConfig{{
+			Name:            replica,
+			Username:        config.Username,
+			Password:        config.Password,
+			Host:            config.Host,
+			Port:            config.Port,
+			DBName:          config.DBName,
+			MaxConns:        config.MaxConns,
+			MaxConnLifetime: config.MaxConnLifetime,
+			MaxConnIdleTime: config.MaxConnIdleTime,
+			AfterConnect:    afterConnect,
+			IsProxy:         true,
+			SSLMode:         config.SSLMode,
+		}}
+		pool, err := wpgx.NewPool(ctx, &config)
+		suite.Require().NoError(err)
+		suite.T().Cleanup(pool.Close)
+		return pool
+	}
+	countIDs := func(pool *wpgx.Pool, name *wpgx.ReplicaName) (int, error) {
+		querier, err := pool.WQuerier(name)
+		suite.Require().NoError(err)
+		var n int
+		err = querier.WQueryRow(ctx, "count_ids",
+			"SELECT cardinality($1::uuid[])", []uuidValue{{1}, {2}}).Scan(&n)
+		return n, err
+	}
+
+	without := newProxyPool(nil)
+	with := newProxyPool(registerUUIDValue)
+	for _, name := range []*wpgx.ReplicaName{nil, &replica} {
+		_, err := countIDs(without, name)
+		suite.ErrorContains(err, "unable to encode")
+
+		n, err := countIDs(with, name)
+		suite.Require().NoError(err)
+		suite.Equal(2, n)
+	}
 }
 
 // TestDumpState tests DumpState() method which uses writeFile() internally
