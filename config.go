@@ -91,6 +91,9 @@ func (c *Config) Valid() error {
 		if replica.Name == ReservedReplicaNamePrimary {
 			return fmt.Errorf("ReadReplicas[%d].Name cannot be %s", i, ReservedReplicaNamePrimary)
 		}
+		if replica.MinConns > replica.MaxConns {
+			return fmt.Errorf("ReadReplicas[%d].MinConns must <= MaxConns, incorrect config: %s", i, c)
+		}
 		if string(replica.Name) == c.AppName {
 			return fmt.Errorf("ReadReplicas[%d].Name must be different from AppName: %s", i, c)
 		}
