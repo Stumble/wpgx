@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/stumble/wpgx"
@@ -332,6 +333,43 @@ func (suite *metaTestSuite) TestGetPool() {
 	pool := suite.GetPool()
 	suite.NotNil(pool)
 	suite.Equal(suite.Pool, pool)
+}
+
+// gatheredCounter returns the value of counter @p metric for @p app and @p op in the
+// default Prometheus registry, and whether the series exists.
+func (suite *metaTestSuite) gatheredCounter(metric, app, op string) (float64, bool) {
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	suite.Require().NoError(err)
+	for _, mf := range mfs {
+		if mf.GetName() != metric {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			labels := map[string]string{}
+			for _, l := range m.GetLabel() {
+				labels[l.GetName()] = l.GetValue()
+			}
+			if labels["app"] == app && labels["op"] == op {
+				return m.GetCounter().GetValue(), true
+			}
+		}
+	}
+	return 0, false
+}
+
+// A pool created and closed next to the suite's pool, as NewIsolation does, must
+// not unregister the metrics the suite's pool is still recording.
+func (suite *metaTestSuite) TestClosingAnotherPoolKeepsMetrics() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	isolation, err := suite.NewIsolation(ctx)
+	suite.Require().NoError(err)
+	defer isolation.Close()
+
+	suite.Pool.WConn().CountIntent("after_other_pool_closed")
+	v, ok := suite.gatheredCounter("wpgx_intent_total", suite.GetConfig().AppName, "after_other_pool_closed")
+	suite.True(ok, "suite pool metrics must still be registered")
+	suite.Equal(1.0, v)
 }
 
 // uuidValue has the shape of github.com/google/uuid.UUID: a Go type that pgx
