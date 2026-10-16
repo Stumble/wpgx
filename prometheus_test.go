@@ -101,7 +101,7 @@ func TestLatencyKeepsSubMillisecondPrecision(t *testing.T) {
 	m.Register()
 	defer m.Unregister()
 
-	m.MakeObserver("fast", nil, time.Now().Add(-1500*time.Microsecond), nil)()
+	m.observe("fast", nil, time.Now().Add(-1500*time.Microsecond), nil)
 	count, sum := histogramSum(t, "wpgx_latency_milliseconds", "metrics_latency", "fast")
 	require.Equal(t, uint64(1), count)
 	require.Greater(t, sum, 1.5, "1.5ms must not be truncated to 1ms")

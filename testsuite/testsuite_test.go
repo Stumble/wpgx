@@ -10,6 +10,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/stumble/wpgx"
 	sqlsuite "github.com/stumble/wpgx/testsuite"
@@ -410,6 +414,25 @@ func (suite *metaTestSuite) TestErrorsAfterQueryReturnAreCounted() {
 	suite.Equal(1.0, errorCount("tx_query_div0"))
 }
 
+// A query's request count and latency are recorded when its rows are finished,
+// so the latency covers reading them.
+func (suite *metaTestSuite) TestQueryMetricsRecordedWhenRowsFinish() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	app := suite.GetConfig().AppName
+	rows, err := suite.Pool.WConn().WQuery(ctx, "metrics_rows", "SELECT generate_series(1, 3)")
+	suite.Require().NoError(err)
+	_, ok := suite.gatheredCounter("wpgx_request_total", app, "metrics_rows")
+	suite.False(ok, "not recorded before the rows are read")
+	rows.Close()
+	v, ok := suite.gatheredCounter("wpgx_request_total", app, "metrics_rows")
+	suite.True(ok)
+	suite.Equal(1.0, v)
+	rows.Close() // closing again does not record twice
+	v, _ = suite.gatheredCounter("wpgx_request_total", app, "metrics_rows")
+	suite.Equal(1.0, v)
+}
+
 // A pool created and closed next to the suite's pool, as NewIsolation does, must
 // not unregister the metrics the suite's pool is still recording.
 func (suite *metaTestSuite) TestClosingAnotherPoolKeepsMetrics() {
@@ -442,6 +465,85 @@ func (suite *metaTestSuite) TestPostExecConcurrentWithCommit() {
 	})
 	wg.Wait()
 	suite.NoError(err)
+}
+
+// newTracedPool returns a pool whose spans are recorded by the returned recorder,
+// and a context carrying a recording parent span (wpgx only traces under one).
+func (suite *metaTestSuite) newTracedPool(ctx context.Context) (*wpgx.Pool, *tracetest.SpanRecorder, context.Context) {
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	suite.T().Cleanup(func() { otel.SetTracerProvider(prev) })
+
+	config := suite.GetConfig()
+	config.EnableTracing = true
+	pool, err := wpgx.NewPool(ctx, &config)
+	suite.Require().NoError(err)
+	suite.T().Cleanup(pool.Close)
+	ctx, parent := tp.Tracer("test").Start(ctx, "parent")
+	suite.T().Cleanup(func() { parent.End() })
+	return pool, recorder, ctx
+}
+
+func endedSpan(recorder *tracetest.SpanRecorder, name string) sdktrace.ReadOnlySpan {
+	for _, s := range recorder.Ended() {
+		if s.Name() == name {
+			return s
+		}
+	}
+	return nil
+}
+
+// A query span covers reading its rows, and records errors that pgx reports
+// through rows.Err() or Row.Scan.
+func (suite *metaTestSuite) TestQuerySpansCoverReadingRows() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool, recorder, ctx := suite.newTracedPool(ctx)
+	conn := pool.WConn()
+
+	rows, err := conn.WQuery(ctx, "span_rows_div0", "SELECT 1/0")
+	suite.Require().NoError(err)
+	suite.Nil(endedSpan(recorder, "span_rows_div0"), "the span must stay open while rows are read")
+	for rows.Next() {
+	}
+	rows.Close()
+	span := endedSpan(recorder, "span_rows_div0")
+	suite.Require().NotNil(span)
+	suite.Equal(codes.Error, span.Status().Code)
+
+	var n int
+	suite.Error(conn.WQueryRow(ctx, "span_row_div0", "SELECT 1/0").Scan(&n))
+	span = endedSpan(recorder, "span_row_div0")
+	suite.Require().NotNil(span)
+	suite.Equal(codes.Error, span.Status().Code)
+
+	suite.ErrorIs(conn.WQueryRow(ctx, "span_row_none", "SELECT 1 WHERE false").Scan(&n), pgx.ErrNoRows)
+	span = endedSpan(recorder, "span_row_none")
+	suite.Require().NotNil(span)
+	suite.Equal(codes.Unset, span.Status().Code, "ErrNoRows is not a failure")
+
+	_, err = pool.Transact(ctx, pgx.TxOptions{}, func(ctx context.Context, tx *wpgx.WTx) (any, error) {
+		rows, err := tx.WQuery(ctx, "span_tx_rows", "SELECT generate_series(1, 3)")
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		suite.True(rows.Next())
+		suite.Nil(endedSpan(recorder, "span_tx_rows"), "the span must stay open while rows are read")
+		for rows.Next() {
+		}
+		suite.NotNil(endedSpan(recorder, "span_tx_rows"), "reading all rows finishes the query")
+		return nil, rows.Err()
+	})
+	suite.Require().NoError(err)
+	span = endedSpan(recorder, "span_tx_rows")
+	suite.Require().NotNil(span)
+	suite.Equal(codes.Unset, span.Status().Code)
+	tx := endedSpan(recorder, "$TX$")
+	suite.Require().NotNil(tx)
+	suite.Equal(tx.SpanContext().SpanID(), span.Parent().SpanID())
 }
 
 // uuidValue has the shape of github.com/google/uuid.UUID: a Go type that pgx

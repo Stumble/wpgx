@@ -128,26 +128,18 @@ func (m *metricSet) Unregister() {
 	m.registered = nil
 }
 
-func (s *metricSet) MakeObserver(name string, replicaName *ReplicaName, startedAt time.Time, errPtr *error) func() {
-	return func() {
-		if s.Request != nil {
-			s.Request.WithLabelValues(s.AppName, name, toLabel(replicaName)).Inc()
-		}
-		if s.Error != nil && errPtr != nil && *errPtr != nil {
-			s.Error.WithLabelValues(s.AppName, name, toLabel(replicaName)).Inc()
-		}
-		if s.Latency != nil {
-			s.Latency.WithLabelValues(s.AppName, name, toLabel(replicaName)).Observe(
-				float64(time.Since(startedAt))/float64(time.Millisecond))
-		}
+// observe records one finished operation that started at @p startedAt and
+// failed with @p err, or succeeded if err is nil.
+func (s *metricSet) observe(name string, replicaName *ReplicaName, startedAt time.Time, err error) {
+	if s.Request != nil {
+		s.Request.WithLabelValues(s.AppName, name, toLabel(replicaName)).Inc()
 	}
-}
-
-// CountError counts an error that surfaced after the observed call returned,
-// e.g. from rows.Err() or Row.Scan.
-func (s *metricSet) CountError(name string, replicaName *ReplicaName) {
-	if s.Error != nil {
+	if s.Error != nil && err != nil {
 		s.Error.WithLabelValues(s.AppName, name, toLabel(replicaName)).Inc()
+	}
+	if s.Latency != nil {
+		s.Latency.WithLabelValues(s.AppName, name, toLabel(replicaName)).Observe(
+			float64(time.Since(startedAt)) / float64(time.Millisecond))
 	}
 }
 

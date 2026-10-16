@@ -36,35 +36,28 @@ func newTracer() *tracer {
 	}
 }
 
-func recordError(span trace.Span, err error) {
+// start starts a client span for operation @p queryName as a child of the span
+// in @p ctx. It returns a nil span, and @p ctx unchanged, when that span is not
+// recording: wpgx only traces operations that are part of a recorded trace.
+func (t *tracer) start(ctx context.Context, queryName string, replicaName *ReplicaName) (context.Context, trace.Span) {
+	if !trace.SpanFromContext(ctx).IsRecording() {
+		return ctx, nil
+	}
+	return t.tracer.Start(ctx, queryName,
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(t.attrs...),
+		trace.WithAttributes(
+			semconv.DBStatementKey.String(queryName),
+			semconv.DBConnectionStringKey.String(toLabel(replicaName)),
+		),
+	)
+}
+
+// endSpan ends @p span, marking it failed if @p err is not nil.
+func endSpan(span trace.Span, err error) {
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-	}
-}
-
-// TraceStart is called at the beginning of Query, QueryRow, and Exec calls.
-// The returned context is used for the rest of the call and will be passed to TraceQueryEnd.
-func (t *tracer) TraceStart(ctx context.Context, queryName string, repliReplicaName *ReplicaName) context.Context {
-	if !trace.SpanFromContext(ctx).IsRecording() {
-		return ctx
-	}
-
-	opts := []trace.SpanStartOption{
-		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(t.attrs...),
-		trace.WithAttributes(semconv.DBStatementKey.String(queryName)),
-		trace.WithAttributes(semconv.DBConnectionStringKey.String(toLabel(repliReplicaName))),
-	}
-	ctx, _ = t.tracer.Start(ctx, queryName, opts...)
-	return ctx
-}
-
-// TraceQueryEnd is called at the end of Query, QueryRow, and Exec calls.
-func (t *tracer) TraceEnd(ctx context.Context, errPtr *error) {
-	span := trace.SpanFromContext(ctx)
-	if errPtr != nil {
-		recordError(span, *errPtr)
 	}
 	span.End()
 }
