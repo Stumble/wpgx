@@ -17,6 +17,7 @@ type WTx struct {
 	stats         *metricSet
 	tracer        *tracer
 	postExecFuncs []PostExecFunc
+	committed     bool
 	mutex         sync.Mutex
 }
 
@@ -101,6 +102,13 @@ func (t *WTx) CountIntent(name string) {
 	}
 }
 
+// isCommitted reports whether Commit has succeeded.
+func (t *WTx) isCommitted() bool {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	return t.committed
+}
+
 func (t *WTx) Rollback(ctx context.Context) error {
 	return t.tx.Rollback(ctx)
 }
@@ -110,6 +118,9 @@ func (t *WTx) Commit(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	t.mutex.Lock()
+	t.committed = true
+	t.mutex.Unlock()
 	t.runPostExecFuncs()
 	return nil
 }

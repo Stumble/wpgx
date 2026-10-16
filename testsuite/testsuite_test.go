@@ -1051,3 +1051,39 @@ func (suite *testIsolationSuite) TestNewIsolation_MainSuiteUnaffected() {
 	suite.NoError(err)
 	suite.Equal("main_suite_value", value)
 }
+
+// fn may commit the transaction itself; Transact then returns fn's result
+// instead of failing to commit a closed transaction.
+func (suite *metaTestSuite) TestTransactAfterCommitInFn() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	postExecRuns := 0
+	resp, err := suite.Pool.Transact(ctx, pgx.TxOptions{}, func(ctx context.Context, tx *wpgx.WTx) (any, error) {
+		_, err := tx.WExec(ctx, "insert",
+			"INSERT INTO docs (id, rev, content, created_at, description) VALUES ($1,$2,$3,$4,$5)",
+			7, 1.0, "committed in fn", time.Now(), json.RawMessage("{}"))
+		if err != nil {
+			return nil, err
+		}
+		suite.Require().NoError(tx.PostExec(func() error { postExecRuns++; return nil }))
+		return "done", tx.Commit(ctx)
+	})
+	suite.Require().NoError(err)
+	suite.Equal("done", resp)
+	suite.Equal(1, postExecRuns)
+
+	var content string
+	suite.Require().NoError(suite.Pool.WConn().WQueryRow(ctx, "select",
+		"SELECT content FROM docs WHERE id = $1", 7).Scan(&content))
+	suite.Equal("committed in fn", content)
+}
+
+// A transaction rolled back by fn is not committed; Transact reports that.
+func (suite *metaTestSuite) TestTransactAfterRollbackInFn() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := suite.Pool.Transact(ctx, pgx.TxOptions{}, func(ctx context.Context, tx *wpgx.WTx) (any, error) {
+		return nil, tx.Rollback(ctx)
+	})
+	suite.ErrorIs(err, pgx.ErrTxClosed)
+}

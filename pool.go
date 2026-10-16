@@ -276,6 +276,7 @@ func (p *Pool) WQuerier(name *ReplicaName) (WQuerier, error) {
 // It acquires a connection from the Pool and starts a transaction with pgx.TxOptions determining the transaction mode.
 // The context will be used when executing the transaction control statements (BEGIN, ROLLBACK, and COMMIT),
 // and when if tracing is enabled, the context with transaction span will be passed down to @p fn.
+// If @p fn returns nil, the transaction is committed, unless @p fn already committed it with tx.Commit.
 func (p *Pool) Transact(ctx context.Context, txOptions pgx.TxOptions, fn TxFunc) (resp interface{}, err error) {
 	if p.tracer != nil {
 		ctx = p.tracer.TraceStart(ctx, transactionTraceSpanName, nil)
@@ -299,6 +300,10 @@ func (p *Pool) Transact(ctx context.Context, txOptions pgx.TxOptions, fn TxFunc)
 	resp, err = fn(ctx, tx)
 	if err != nil {
 		return nil, err
+	}
+	if tx.isCommitted() {
+		// fn committed the transaction itself.
+		return resp, nil
 	}
 	err = tx.Commit(ctx)
 	if err != nil {
