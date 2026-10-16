@@ -2,11 +2,13 @@ package wpgx
 
 import (
 	"context"
+	"errors"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	semconv "go.opentelemetry.io/otel/semconv/v1.11.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -18,6 +20,10 @@ const (
 	// InstrumentationVersion is the version of the wpgx library. This will
 	// be used as an attribute on each span.
 	instrumentationVersion = "v0.0.1"
+
+	// replicaKey is the wpgx instance that ran the operation: "primary" or a
+	// replica name. The semantic conventions have no attribute for it.
+	replicaKey = attribute.Key("wpgx.replica")
 )
 
 type tracer struct {
@@ -29,9 +35,11 @@ type tracer struct {
 func newTracer() *tracer {
 	return &tracer{
 		tracer: otel.GetTracerProvider().Tracer(
-			tracerName, trace.WithInstrumentationVersion(instrumentationVersion)),
+			tracerName,
+			trace.WithInstrumentationVersion(instrumentationVersion),
+			trace.WithSchemaURL(semconv.SchemaURL)),
 		attrs: []attribute.KeyValue{
-			semconv.DBSystemPostgreSQL,
+			semconv.DBSystemNamePostgreSQL,
 		},
 	}
 }
@@ -47,15 +55,25 @@ func (t *tracer) start(ctx context.Context, queryName string, replicaName *Repli
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(t.attrs...),
 		trace.WithAttributes(
-			semconv.DBStatementKey.String(queryName),
-			semconv.DBConnectionStringKey.String(toLabel(replicaName)),
+			semconv.DBQuerySummary(queryName),
+			replicaKey.String(toLabel(replicaName)),
 		),
 	)
 }
 
-// endSpan ends @p span, marking it failed if @p err is not nil.
+// endSpan ends @p span, marking it failed if @p err is not nil. A PostgreSQL
+// error is identified by its SQLSTATE code, other errors by their Go type.
 func endSpan(span trace.Span, err error) {
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			span.SetAttributes(
+				semconv.DBResponseStatusCode(pgErr.Code),
+				semconv.ErrorTypeKey.String(pgErr.Code),
+			)
+		} else {
+			span.SetAttributes(semconv.ErrorType(err))
+		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 	}

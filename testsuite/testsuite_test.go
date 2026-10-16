@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -544,6 +545,48 @@ func (suite *metaTestSuite) TestQuerySpansCoverReadingRows() {
 	tx := endedSpan(recorder, "$TX$")
 	suite.Require().NotNil(tx)
 	suite.Equal(tx.SpanContext().SpanID(), span.Parent().SpanID())
+}
+
+func spanAttrs(span sdktrace.ReadOnlySpan) map[attribute.Key]string {
+	attrs := map[attribute.Key]string{}
+	for _, kv := range span.Attributes() {
+		attrs[kv.Key] = kv.Value.AsString()
+	}
+	return attrs
+}
+
+// Spans use the OpenTelemetry database semantic conventions v1.43.0.
+func (suite *metaTestSuite) TestSpanAttributes() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool, recorder, ctx := suite.newTracedPool(ctx)
+	conn := pool.WConn()
+
+	var n int
+	suite.NoError(conn.WQueryRow(ctx, "attrs_ok", "SELECT 1").Scan(&n))
+	span := endedSpan(recorder, "attrs_ok")
+	suite.Require().NotNil(span)
+	suite.Equal("https://opentelemetry.io/schemas/1.43.0", span.InstrumentationScope().SchemaURL)
+	suite.Equal(map[attribute.Key]string{
+		"db.system.name":   "postgresql",
+		"db.query.summary": "attrs_ok",
+		"wpgx.replica":     "primary",
+	}, spanAttrs(span))
+
+	suite.Error(conn.WQueryRow(ctx, "attrs_pg_error", "SELECT 1/0").Scan(&n))
+	span = endedSpan(recorder, "attrs_pg_error")
+	suite.Require().NotNil(span)
+	attrs := spanAttrs(span)
+	suite.Equal("22012", attrs["db.response.status_code"], "SQLSTATE of division_by_zero")
+	suite.Equal("22012", attrs["error.type"])
+
+	var b bool
+	suite.Error(conn.WQueryRow(ctx, "attrs_scan_error", "SELECT 'x'").Scan(&b))
+	span = endedSpan(recorder, "attrs_scan_error")
+	suite.Require().NotNil(span)
+	attrs = spanAttrs(span)
+	suite.NotContains(attrs, attribute.Key("db.response.status_code"))
+	suite.Equal("github.com/jackc/pgx/v5.ScanArgError", attrs["error.type"])
 }
 
 // uuidValue has the shape of github.com/google/uuid.UUID: a Go type that pgx
