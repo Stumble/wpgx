@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
+	"strconv"
 	"sync"
 	"time"
 
@@ -47,27 +50,26 @@ type pgxConfig struct {
 	SSLMode         string
 }
 
-func newRawPgxPool(ctx context.Context, config *pgxConfig) (*pgxpool.Pool, error) {
-	var connString string
-	if config.Password != "" {
-		connString = fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
-			config.Username,
-			config.Password,
-			config.Host,
-			config.Port,
-			config.DBName,
-			config.SSLMode,
-		)
-	} else {
-		connString = fmt.Sprintf("postgres://%s@%s:%d/%s?sslmode=%s",
-			config.Username,
-			config.Host,
-			config.Port,
-			config.DBName,
-			config.SSLMode,
-		)
+// connString builds a postgres:// URI from @p config, percent-encoding every
+// component so credentials and database names may contain URI delimiters
+// such as '@', '/', '?', '#', '%' or spaces.
+func connString(config *pgxConfig) string {
+	u := url.URL{
+		Scheme:   "postgres",
+		User:     url.User(config.Username),
+		Host:     net.JoinHostPort(config.Host, strconv.Itoa(config.Port)),
+		Path:     "/" + config.DBName,
+		RawPath:  "/" + url.PathEscape(config.DBName),
+		RawQuery: url.Values{"sslmode": {config.SSLMode}}.Encode(),
 	}
-	pgConfig, err := pgxpool.ParseConfig(connString)
+	if config.Password != "" {
+		u.User = url.UserPassword(config.Username, config.Password)
+	}
+	return u.String()
+}
+
+func newRawPgxPool(ctx context.Context, config *pgxConfig) (*pgxpool.Pool, error) {
+	pgConfig, err := pgxpool.ParseConfig(connString(config))
 	if err != nil {
 		return nil, err
 	}

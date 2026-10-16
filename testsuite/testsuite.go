@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -65,7 +67,9 @@ const (
 	GoldenFileSuffix    = ".golden"
 	VarGoldenFileSuffix = ".var.golden"
 
-	// Connection string format
+	// Connection string format.
+	//
+	// Deprecated: it does not escape its components; the suite no longer uses it.
 	PostgresConnStringFormat = "postgres://%s:%s@%s:%d/postgres"
 )
 
@@ -271,9 +275,13 @@ func (t *Isolation) NewPool(ctx context.Context) (*wpgx.Pool, error) {
 // connectToPostgresDB creates a connection to the postgres database (not a specific database)
 // This is used for database management operations like CREATE DATABASE and DROP DATABASE
 func (suite *WPgxTestSuite) connectToPostgresDB(ctx context.Context) (*pgx.Conn, error) {
-	return pgx.Connect(ctx, fmt.Sprintf(
-		PostgresConnStringFormat,
-		suite.config.Username, suite.config.Password, suite.config.Host, suite.config.Port))
+	u := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(suite.config.Username, suite.config.Password),
+		Host:   net.JoinHostPort(suite.config.Host, strconv.Itoa(suite.config.Port)),
+		Path:   "/postgres",
+	}
+	return pgx.Connect(ctx, u.String())
 }
 
 // createDatabase creates a database with the given name using the provided connection
