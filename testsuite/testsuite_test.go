@@ -357,6 +357,58 @@ func (suite *metaTestSuite) gatheredCounter(metric, app, op string) (float64, bo
 	return 0, false
 }
 
+// Errors of a query that fails during execution are reported by rows.Err() or
+// Row.Scan, not by Query; they must still be counted as errors.
+func (suite *metaTestSuite) TestErrorsAfterQueryReturnAreCounted() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	app := suite.GetConfig().AppName
+	errorCount := func(op string) float64 {
+		v, _ := suite.gatheredCounter("wpgx_error_total", app, op)
+		return v
+	}
+	readAll := func(conn wpgx.WQuerier, op string) error {
+		rows, err := conn.WQuery(ctx, op, "SELECT 1/0")
+		suite.Require().NoError(err, "pgx reports execution errors through rows")
+		defer rows.Close()
+		for rows.Next() {
+		}
+		return rows.Err()
+	}
+	scanOne := func(conn wpgx.WQuerier, op, query string) error {
+		var n int
+		return conn.WQueryRow(ctx, op, query).Scan(&n)
+	}
+
+	conn := suite.Pool.WConn()
+	suite.Error(readAll(conn, "conn_query_div0"))
+	suite.Equal(1.0, errorCount("conn_query_div0"))
+	suite.Error(scanOne(conn, "conn_row_div0", "SELECT 1/0"))
+	suite.Equal(1.0, errorCount("conn_row_div0"))
+	suite.ErrorIs(scanOne(conn, "conn_row_none", "SELECT 1 WHERE false"), pgx.ErrNoRows)
+	suite.Equal(0.0, errorCount("conn_row_none"), "ErrNoRows is not a failure")
+
+	// Rows closed early without an error are not counted.
+	rows, err := conn.WQuery(ctx, "conn_query_ok", "SELECT generate_series(1, 3)")
+	suite.Require().NoError(err)
+	suite.True(rows.Next())
+	rows.Close()
+	suite.NoError(rows.Err())
+	suite.Equal(0.0, errorCount("conn_query_ok"))
+
+	_, err = suite.Pool.Transact(ctx, pgx.TxOptions{}, func(ctx context.Context, tx *wpgx.WTx) (any, error) {
+		suite.Error(scanOne(tx, "tx_row_div0", "SELECT 1/0"))
+		return nil, nil
+	})
+	suite.Error(err, "the failed statement aborts the transaction")
+	suite.Equal(1.0, errorCount("tx_row_div0"))
+	_, err = suite.Pool.Transact(ctx, pgx.TxOptions{}, func(ctx context.Context, tx *wpgx.WTx) (any, error) {
+		return nil, readAll(tx, "tx_query_div0")
+	})
+	suite.Error(err)
+	suite.Equal(1.0, errorCount("tx_query_div0"))
+}
+
 // A pool created and closed next to the suite's pool, as NewIsolation does, must
 // not unregister the metrics the suite's pool is still recording.
 func (suite *metaTestSuite) TestClosingAnotherPoolKeepsMetrics() {

@@ -143,6 +143,14 @@ func (s *metricSet) MakeObserver(name string, replicaName *ReplicaName, startedA
 	}
 }
 
+// CountError counts an error that surfaced after the observed call returned,
+// e.g. from rows.Err() or Row.Scan.
+func (s *metricSet) CountError(name string, replicaName *ReplicaName) {
+	if s.Error != nil {
+		s.Error.WithLabelValues(s.AppName, name, toLabel(replicaName)).Inc()
+	}
+}
+
 func (s *metricSet) CountIntent(name string, replicaName *ReplicaName) {
 	if s.Intent != nil {
 		s.Intent.WithLabelValues(s.AppName, name, toLabel(replicaName)).Inc()
