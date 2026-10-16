@@ -3,6 +3,7 @@ package wpgx
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -109,6 +110,8 @@ func (c *Config) String() string {
 	if len(copy.Password) > 0 {
 		copy.Password = "*hidden*"
 	}
+	// copy shares the ReadReplicas backing array with c; clone it before masking.
+	copy.ReadReplicas = slices.Clone(copy.ReadReplicas)
 	for i := range copy.ReadReplicas {
 		copy.ReadReplicas[i].Password = "*hidden*"
 	}
