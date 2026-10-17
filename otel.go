@@ -2,11 +2,13 @@ package wpgx
 
 import (
 	"context"
+	"errors"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	semconv "go.opentelemetry.io/otel/semconv/v1.11.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -18,6 +20,10 @@ const (
 	// InstrumentationVersion is the version of the wpgx library. This will
 	// be used as an attribute on each span.
 	instrumentationVersion = "v0.0.1"
+
+	// replicaKey is the wpgx instance that ran the operation: "primary" or a
+	// replica name. The semantic conventions have no attribute for it.
+	replicaKey = attribute.Key("wpgx.replica")
 )
 
 type tracer struct {
@@ -29,42 +35,47 @@ type tracer struct {
 func newTracer() *tracer {
 	return &tracer{
 		tracer: otel.GetTracerProvider().Tracer(
-			tracerName, trace.WithInstrumentationVersion(instrumentationVersion)),
+			tracerName,
+			trace.WithInstrumentationVersion(instrumentationVersion),
+			trace.WithSchemaURL(semconv.SchemaURL)),
 		attrs: []attribute.KeyValue{
-			semconv.DBSystemPostgreSQL,
+			semconv.DBSystemNamePostgreSQL,
 		},
 	}
 }
 
-func recordError(span trace.Span, err error) {
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-	}
-}
-
-// TraceStart is called at the beginning of Query, QueryRow, and Exec calls.
-// The returned context is used for the rest of the call and will be passed to TraceQueryEnd.
-func (t *tracer) TraceStart(ctx context.Context, queryName string, repliReplicaName *ReplicaName) context.Context {
+// start starts a client span for operation @p queryName as a child of the span
+// in @p ctx. It returns a nil span, and @p ctx unchanged, when that span is not
+// recording: wpgx only traces operations that are part of a recorded trace.
+func (t *tracer) start(ctx context.Context, queryName string, replicaName *ReplicaName) (context.Context, trace.Span) {
 	if !trace.SpanFromContext(ctx).IsRecording() {
-		return ctx
+		return ctx, nil
 	}
-
-	opts := []trace.SpanStartOption{
+	return t.tracer.Start(ctx, queryName,
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(t.attrs...),
-		trace.WithAttributes(semconv.DBStatementKey.String(queryName)),
-		trace.WithAttributes(semconv.DBConnectionStringKey.String(toLabel(repliReplicaName))),
-	}
-	ctx, _ = t.tracer.Start(ctx, queryName, opts...)
-	return ctx
+		trace.WithAttributes(
+			semconv.DBQuerySummary(queryName),
+			replicaKey.String(toLabel(replicaName)),
+		),
+	)
 }
 
-// TraceQueryEnd is called at the end of Query, QueryRow, and Exec calls.
-func (t *tracer) TraceEnd(ctx context.Context, errPtr *error) {
-	span := trace.SpanFromContext(ctx)
-	if errPtr != nil {
-		recordError(span, *errPtr)
+// endSpan ends @p span, marking it failed if @p err is not nil. A PostgreSQL
+// error is identified by its SQLSTATE code, other errors by their Go type.
+func endSpan(span trace.Span, err error) {
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			span.SetAttributes(
+				semconv.DBResponseStatusCode(pgErr.Code),
+				semconv.ErrorTypeKey.String(pgErr.Code),
+			)
+		} else {
+			span.SetAttributes(semconv.ErrorType(err))
+		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 	}
 	span.End()
 }

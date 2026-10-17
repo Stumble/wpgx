@@ -3,7 +3,6 @@ package wpgx
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -47,50 +46,28 @@ func (t *WTx) PostExec(f PostExecFunc) error {
 	return nil
 }
 
-func (t *WTx) WQuery(ctx context.Context, name string, unprepared string, args ...interface{}) (rows pgx.Rows, err error) {
-	if t.stats != nil {
-		defer t.stats.MakeObserver(name, nil, time.Now(), &err)()
-	}
-	if t.tracer != nil {
-		ctx = t.tracer.TraceStart(ctx, name, nil)
-		defer t.tracer.TraceEnd(ctx, &err)
-	}
-	rows, err = t.tx.Query(ctx, unprepared, args...)
-	return observeRows(t.stats, name, nil, rows, err), err
+func (t *WTx) WQuery(ctx context.Context, name string, unprepared string, args ...interface{}) (pgx.Rows, error) {
+	ctx, o := startOp(ctx, t.stats, t.tracer, name, nil)
+	rows, err := t.tx.Query(ctx, unprepared, args...)
+	return o.rows(rows, err), err
 }
 
 func (t *WTx) WQueryRow(ctx context.Context, name string, unprepared string, args ...interface{}) pgx.Row {
-	if t.stats != nil {
-		defer t.stats.MakeObserver(name, nil, time.Now(), nil)()
-	}
-	if t.tracer != nil {
-		ctx = t.tracer.TraceStart(ctx, name, nil)
-		defer t.tracer.TraceEnd(ctx, nil)
-	}
-	return observeRow(t.stats, name, nil, t.tx.QueryRow(ctx, unprepared, args...))
+	ctx, o := startOp(ctx, t.stats, t.tracer, name, nil)
+	return o.row(t.tx.QueryRow(ctx, unprepared, args...))
 }
 
 func (t *WTx) WExec(ctx context.Context, name string, unprepared string, args ...interface{}) (cmd pgconn.CommandTag, err error) {
-	if t.stats != nil {
-		defer t.stats.MakeObserver(name, nil, time.Now(), &err)()
-	}
-	if t.tracer != nil {
-		ctx = t.tracer.TraceStart(ctx, name, nil)
-		defer t.tracer.TraceEnd(ctx, &err)
-	}
+	ctx, o := startOp(ctx, t.stats, t.tracer, name, nil)
+	defer func() { o.end(err) }()
 	cmd, err = t.tx.Exec(ctx, unprepared, args...)
 	return
 }
 
 func (t *WTx) WCopyFrom(
 	ctx context.Context, name string, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (n int64, err error) {
-	if t.stats != nil {
-		defer t.stats.MakeObserver(name, nil, time.Now(), &err)()
-	}
-	if t.tracer != nil {
-		ctx = t.tracer.TraceStart(ctx, name, nil)
-		defer t.tracer.TraceEnd(ctx, &err)
-	}
+	ctx, o := startOp(ctx, t.stats, t.tracer, name, nil)
+	defer func() { o.end(err) }()
 	n, err = t.tx.CopyFrom(ctx, tableName, columnNames, rowSrc)
 	return
 }

@@ -12,6 +12,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	go.opentelemetry.io/otel v1.47.0
+	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0
 	golang.org/x/sync v0.24.0
 )

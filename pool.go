@@ -277,10 +277,8 @@ func (p *Pool) WQuerier(name *ReplicaName) (WQuerier, error) {
 // The context will be used when executing the transaction control statements (BEGIN, ROLLBACK, and COMMIT),
 // and when if tracing is enabled, the context with transaction span will be passed down to @p fn.
 func (p *Pool) Transact(ctx context.Context, txOptions pgx.TxOptions, fn TxFunc) (resp interface{}, err error) {
-	if p.tracer != nil {
-		ctx = p.tracer.TraceStart(ctx, transactionTraceSpanName, nil)
-		defer p.tracer.TraceEnd(ctx, &err)
-	}
+	ctx, o := startOp(ctx, nil, p.tracer, transactionTraceSpanName, nil)
+	defer func() { o.end(err) }()
 	pgxTx, err := p.pool.BeginTx(ctx, txOptions)
 	if err != nil {
 		return nil, err

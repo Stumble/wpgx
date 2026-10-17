@@ -1,18 +1,78 @@
 package wpgx
 
 import (
+	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel/trace"
 )
 
-// observedRows reports the error of a query that fails after Query returned,
-// e.g. during execution or while reading rows; pgx surfaces those through
-// rows.Err() rather than from Query.
+// op observes one database operation: it counts the request and any error,
+// records the latency, and ends the client span, all when the operation ends.
+// A nil *op observes nothing.
+type op struct {
+	stats       *metricSet
+	name        string
+	replicaName *ReplicaName
+	startedAt   time.Time
+	span        trace.Span // nil when no span was started
+}
+
+// startOp starts observing operation @p name. The returned context carries the
+// operation's span, if one was started, and must be used to run the operation.
+func startOp(ctx context.Context, stats *metricSet, tracer *tracer, name string, replicaName *ReplicaName) (context.Context, *op) {
+	if stats == nil && tracer == nil {
+		return ctx, nil
+	}
+	o := &op{stats: stats, name: name, replicaName: replicaName, startedAt: time.Now()}
+	if tracer != nil {
+		ctx, o.span = tracer.start(ctx, name, replicaName)
+	}
+	return ctx, o
+}
+
+// end ends the operation with @p err, which is nil on success.
+func (o *op) end(err error) {
+	if o == nil {
+		return
+	}
+	if o.stats != nil {
+		o.stats.observe(o.name, o.replicaName, o.startedAt, err)
+	}
+	if o.span != nil {
+		endSpan(o.span, err)
+	}
+}
+
+// rows ends the operation when @p rows are finished, i.e. read to the end or
+// closed. pgx reports most query failures, such as execution and scan errors,
+// through rows.Err() rather than from Query.
+func (o *op) rows(rows pgx.Rows, err error) pgx.Rows {
+	if o == nil {
+		return rows
+	}
+	if err != nil {
+		o.end(err)
+		return rows
+	}
+	return &observedRows{Rows: rows, op: o}
+}
+
+// row ends the operation when @p row is scanned, which is where QueryRow
+// errors surface. pgx.ErrNoRows is an expected outcome, not a failure.
+func (o *op) row(row pgx.Row) pgx.Row {
+	if o == nil {
+		return row
+	}
+	return &observedRow{Row: row, op: o}
+}
+
 type observedRows struct {
 	pgx.Rows
-	onErr func()
-	done  bool
+	op   *op
+	done bool
 }
 
 func (r *observedRows) Next() bool {
@@ -33,36 +93,24 @@ func (r *observedRows) finish() {
 		return
 	}
 	r.done = true
-	if r.Err() != nil {
-		r.onErr()
-	}
+	r.op.end(r.Err())
 }
 
-// observedRow reports the error returned by Scan, which is where QueryRow
-// errors surface. pgx.ErrNoRows is an expected outcome, not a failure.
 type observedRow struct {
 	pgx.Row
-	onErr func()
+	op   *op
+	done bool
 }
 
-func (r observedRow) Scan(dest ...any) error {
+func (r *observedRow) Scan(dest ...any) error {
 	err := r.Row.Scan(dest...)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		r.onErr()
+	if !r.done {
+		r.done = true
+		if errors.Is(err, pgx.ErrNoRows) {
+			r.op.end(nil)
+		} else {
+			r.op.end(err)
+		}
 	}
 	return err
-}
-
-func observeRows(stats *metricSet, name string, replicaName *ReplicaName, rows pgx.Rows, err error) pgx.Rows {
-	if stats == nil || err != nil {
-		return rows
-	}
-	return &observedRows{Rows: rows, onErr: func() { stats.CountError(name, replicaName) }}
-}
-
-func observeRow(stats *metricSet, name string, replicaName *ReplicaName, row pgx.Row) pgx.Row {
-	if stats == nil {
-		return row
-	}
-	return observedRow{Row: row, onErr: func() { stats.CountError(name, replicaName) }}
 }
