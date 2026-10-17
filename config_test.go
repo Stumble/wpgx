@@ -46,3 +46,17 @@ func (suite *ConfigTestSuite) TestStringDoesNotMutateConfig() {
 	suite.Equal("primary-secret", config.Password)
 	suite.Equal("replica-secret", config.ReadReplicas[0].Password)
 }
+
+func (suite *ConfigTestSuite) TestValidRejectsReplicaMinConnsAboveMaxConns() {
+	config := &Config{
+		MaxConns: 10,
+		AppName:  "test",
+		ReadReplicas: []ReadReplicaConfig{
+			{Name: "r1", MinConns: 5, MaxConns: 10},
+			{Name: "r2", MinConns: 11, MaxConns: 10},
+		},
+	}
+	suite.ErrorContains(config.Valid(), "ReadReplicas[1].MinConns")
+	config.ReadReplicas[1].MinConns = 10
+	suite.NoError(config.Valid())
+}
