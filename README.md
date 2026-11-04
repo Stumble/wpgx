@@ -47,10 +47,18 @@ make test-container
 - ✅ Works seamlessly in CI/CD (GitHub Actions, etc.)
 - ✅ Only requires Docker to be running
 
+**PostgreSQL version:** `testsuite.NewWPgxTestSuiteTcDefault` starts
+`postgres:14.5` (`testsuite.DefaultPostgresImage`). Test against the major
+version your production database runs:
+
+```go
+testsuite.NewWPgxTestSuiteTcDefault(tables, testsuite.WithPostgresImage("postgres:18.6"))
+```
+
 ### Environment Variables
 
 - `USE_TEST_CONTAINERS=true` - Enable testcontainers mode
-- See [testsuite/README.md](testsuite/README.md) for detailed documentation
+- See the [`testsuite` package documentation](https://pkg.go.dev/github.com/stumble/wpgx/testsuite)
 
 ### CI/CD Integration
 
@@ -59,4 +67,4 @@ Two GitHub Actions workflows are provided:
 1. **test-with-containers.yml** - Uses testcontainers (recommended)
 2. **go.yml** - Uses GitHub Actions services (traditional)
 
-For more details, see the [TestSuite Documentation](testsuite/README.md).
+For more details, see the [`testsuite` package documentation](https://pkg.go.dev/github.com/stumble/wpgx/testsuite).

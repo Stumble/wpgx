@@ -3,6 +3,7 @@ package testsuite_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -773,6 +774,26 @@ func (suite *containerTestSuite) TestTearDownTestErrorHandling() {
 	suite.NotPanics(func() {
 		suite.TearDownTest()
 	})
+}
+
+// imageTestSuite checks that WithPostgresImage selects the container image.
+type imageTestSuite struct {
+	*sqlsuite.WPgxTestSuite
+}
+
+func TestWithPostgresImage(t *testing.T) {
+	suite.Run(t, &imageTestSuite{
+		WPgxTestSuite: sqlsuite.NewWPgxTestSuiteTcDefault(nil, sqlsuite.WithPostgresImage("postgres:18.6")),
+	})
+}
+
+func (suite *imageTestSuite) TestServerVersion() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var version string
+	err := suite.Pool.RawPool().QueryRow(ctx, "SHOW server_version").Scan(&version)
+	suite.Require().NoError(err)
+	suite.True(strings.HasPrefix(version, "18.6"), "server_version = %q", version)
 }
 
 // dataIsolationTestSuite tests that data doesn't leak between tests
