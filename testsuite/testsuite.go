@@ -47,6 +47,9 @@ const (
 	logOccurrenceCount      = 2
 
 	// Default config constants
+
+	// DefaultPostgresImage is the image of the test container unless
+	// WithPostgresImage selects another one.
 	DefaultPostgresImage   = "postgres:14.5"
 	DefaultUsername        = "postgres"
 	DefaultPassword        = "my-secret"
@@ -82,6 +85,18 @@ type WPgxTestSuite struct {
 	Pool              *wpgx.Pool
 	postgresContainer *postgres.PostgresContainer
 	useContainer      bool
+	postgresImage     string
+}
+
+// TcOption configures the container started by NewWPgxTestSuiteTcDefault.
+type TcOption func(*WPgxTestSuite)
+
+// WithPostgresImage sets the PostgreSQL image of the test container, e.g.
+// "postgres:18.6". Use the major version your production database runs, so
+// tests do not accept SQL that production rejects. Default:
+// DefaultPostgresImage.
+func WithPostgresImage(image string) TcOption {
+	return func(s *WPgxTestSuite) { s.postgresImage = image }
 }
 
 // NewWPgxTestSuiteFromEnv initialize WPgxTestSuite from environment variables using default wpgx prefix.
@@ -141,7 +156,9 @@ func NewWPgxTestSuiteFromConfig(config *wpgx.Config, tables []string, useContain
 //
 // To connect to this testsuite from other code, you should use GetConfig() to get the config
 // with container connection details after SetupSuite (typically in SetupTest or BeforeTest).
-func NewWPgxTestSuiteTcDefault(tables []string) *WPgxTestSuite {
+//
+// Options such as WithPostgresImage change the container.
+func NewWPgxTestSuiteTcDefault(tables []string, opts ...TcOption) *WPgxTestSuite {
 	config := wpgx.Config{
 		Username:         DefaultUsername,
 		Password:         DefaultPassword,
@@ -158,7 +175,11 @@ func NewWPgxTestSuiteTcDefault(tables []string) *WPgxTestSuite {
 		EnableTracing:    false,
 		AppName:          DefaultAppName,
 	}
-	return NewWPgxTestSuiteFromConfig(&config, tables, true)
+	s := NewWPgxTestSuiteFromConfig(&config, tables, true)
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Config returns the updated config. You MUST use this new config to create pools if you
@@ -185,8 +206,12 @@ func (suite *WPgxTestSuite) setupContainer() {
 	// Start PostgreSQL container
 	// Use postgres superuser for reliable authentication across all environments.
 	// The default testcontainers credentials (test/test) can have authentication issues.
+	image := suite.postgresImage
+	if image == "" {
+		image = DefaultPostgresImage
+	}
 	container, err := postgres.Run(ctx,
-		DefaultPostgresImage,
+		image,
 		postgres.WithDatabase(suite.config.DBName),
 		postgres.WithUsername(suite.config.Username),
 		postgres.WithPassword(suite.config.Password),
