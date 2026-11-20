@@ -17,6 +17,11 @@ type metricSet struct {
 	Latency  *prometheus.HistogramVec
 	Intent   *prometheus.CounterVec
 	Error    *prometheus.CounterVec
+	// AcquireWait, DBLatency and Timeout cover statements run with a database
+	// timeout, see WithDBTimeout.
+	AcquireWait *prometheus.HistogramVec
+	DBLatency   *prometheus.HistogramVec
+	Timeout     *prometheus.CounterVec
 
 	// registered holds the collectors this set took a reference on in Register.
 	registered []prometheus.Collector
@@ -31,8 +36,16 @@ var (
 	registryRefs = make(map[prometheus.Collector]int)
 )
 
+const (
+	labelApp     = "app"
+	labelOp      = "op"
+	labelReplica = "replica"
+)
+
 var (
-	labels        = []string{"app", "op", "replica"}
+	labels        = []string{labelApp, labelOp, labelReplica}
+	poolLabels    = []string{labelApp, labelReplica}
+	timeoutLabels = []string{labelApp, labelOp, labelReplica, "phase"}
 	latencyBucket = []float64{
 		4, 8, 16, 32, 64, 128, 256, 512, 1024, 2 * 1024, 4 * 1024, 8 * 1024, 16 * 1024, 32 * 1024}
 	connPoolUpdateInterval = 3 * time.Second
@@ -67,6 +80,23 @@ func newMetricSet(appName string) *metricSet {
 				Name: "wpgx_error_total",
 				Help: "how many errors were generated for this app and op.",
 			}, labels),
+		AcquireWait: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "wpgx_acquire_wait_milliseconds",
+				Help:    "time statements with a database timeout waited for a pooled connection, in milliseconds",
+				Buckets: latencyBucket,
+			}, poolLabels),
+		DBLatency: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "wpgx_db_latency_milliseconds",
+				Help:    "time statements with a database timeout held their connection, in milliseconds",
+				Buckets: latencyBucket,
+			}, labels),
+		Timeout: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "wpgx_timeout_total",
+				Help: "statements whose wpgx budget expired; phase is acquire (waiting for a connection) or db (before the statement finished).",
+			}, timeoutLabels),
 	}
 }
 
@@ -79,6 +109,9 @@ func (m *metricSet) Register() {
 	m.Latency = register(m, m.Latency, "Latency histogram", &failed)
 	m.Intent = register(m, m.Intent, "Intent counters", &failed)
 	m.Error = register(m, m.Error, "Error counters", &failed)
+	m.AcquireWait = register(m, m.AcquireWait, "AcquireWait histogram", &failed)
+	m.DBLatency = register(m, m.DBLatency, "DBLatency histogram", &failed)
+	m.Timeout = register(m, m.Timeout, "Timeout counters", &failed)
 	if len(failed) > 0 {
 		log.Error().Msgf("failed to register Prometheus metrics: %v", failed)
 	}
@@ -116,7 +149,7 @@ func (m *metricSet) Unregister() {
 	defer registryMu.Unlock()
 	if len(m.registered) > 0 && m.ConnPool != nil {
 		// The gauges may outlive this set when shared; drop this app's stale values.
-		m.ConnPool.DeletePartialMatch(prometheus.Labels{"app": m.AppName})
+		m.ConnPool.DeletePartialMatch(prometheus.Labels{labelApp: m.AppName})
 	}
 	for _, c := range m.registered {
 		registryRefs[c]--
@@ -143,6 +176,37 @@ func (s *metricSet) observe(name string, replicaName *ReplicaName, startedAt tim
 	}
 }
 
+// observeAcquire records that statement @p name waited @p wait for a pooled
+// connection and failed with @p err, or got one if err is nil. A statement
+// rejected by MaxAcquireWaiters did not wait and is counted by the pool.
+func (s *metricSet) observeAcquire(name string, replicaName *ReplicaName, wait time.Duration, err error) {
+	if s == nil || errors.Is(err, ErrTooManyAcquireWaiters) {
+		return
+	}
+	if s.AcquireWait != nil {
+		s.AcquireWait.WithLabelValues(s.AppName, toLabel(replicaName)).Observe(
+			float64(wait) / float64(time.Millisecond))
+	}
+	if s.Timeout != nil && errors.Is(err, ErrAcquireTimeout) {
+		s.Timeout.WithLabelValues(s.AppName, name, toLabel(replicaName), "acquire").Inc()
+	}
+}
+
+// observeDB records that statement @p name held its connection since
+// @p startedAt, and whether its database timeout expired before it finished.
+func (s *metricSet) observeDB(name string, replicaName *ReplicaName, startedAt time.Time, timedOut bool) {
+	if s == nil {
+		return
+	}
+	if s.DBLatency != nil {
+		s.DBLatency.WithLabelValues(s.AppName, name, toLabel(replicaName)).Observe(
+			float64(time.Since(startedAt)) / float64(time.Millisecond))
+	}
+	if s.Timeout != nil && timedOut {
+		s.Timeout.WithLabelValues(s.AppName, name, toLabel(replicaName), "db").Inc()
+	}
+}
+
 func (s *metricSet) CountIntent(name string, replicaName *ReplicaName) {
 	if s.Intent != nil {
 		s.Intent.WithLabelValues(s.AppName, name, toLabel(replicaName)).Inc()
@@ -152,6 +216,7 @@ func (s *metricSet) CountIntent(name string, replicaName *ReplicaName) {
 type pgxPoolStat struct {
 	replicaName *ReplicaName
 	stats       *pgxpool.Stat
+	acquirer    *acquirer
 }
 
 func (s *metricSet) UpdateConnPoolGauge(statsList []pgxPoolStat) {
@@ -165,6 +230,23 @@ func (s *metricSet) UpdateConnPoolGauge(statsList []pgxPoolStat) {
 			s.ConnPool.WithLabelValues(s.AppName, "acquired_conns", toLabel(replicaName)).Set(float64(stats.AcquiredConns()))
 			s.ConnPool.WithLabelValues(s.AppName, "constructing_conns", toLabel(replicaName)).Set(
 				float64(stats.ConstructingConns()))
+			// Cumulative counts since the pool started; use rate() or increase().
+			s.ConnPool.WithLabelValues(s.AppName, "empty_acquire_count", toLabel(replicaName)).Set(
+				float64(stats.EmptyAcquireCount()))
+			s.ConnPool.WithLabelValues(s.AppName, "empty_acquire_wait_seconds", toLabel(replicaName)).Set(
+				stats.EmptyAcquireWaitTime().Seconds())
+			s.ConnPool.WithLabelValues(s.AppName, "canceled_acquire_count", toLabel(replicaName)).Set(
+				float64(stats.CanceledAcquireCount()))
+			s.ConnPool.WithLabelValues(s.AppName, "new_conns_count", toLabel(replicaName)).Set(
+				float64(stats.NewConnsCount()))
+			if a := poolStats.acquirer; a != nil {
+				// Statements with a database timeout waiting for a connection now,
+				// and those MaxAcquireWaiters rejected since the pool started.
+				s.ConnPool.WithLabelValues(s.AppName, "acquire_waiting", toLabel(replicaName)).Set(
+					float64(a.waiting.Load()))
+				s.ConnPool.WithLabelValues(s.AppName, "acquire_rejected_count", toLabel(replicaName)).Set(
+					float64(a.rejected.Load()))
+			}
 		}
 	}
 }

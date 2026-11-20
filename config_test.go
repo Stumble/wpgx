@@ -2,6 +2,7 @@ package wpgx
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -58,5 +59,34 @@ func (suite *ConfigTestSuite) TestValidRejectsReplicaMinConnsAboveMaxConns() {
 	}
 	suite.ErrorContains(config.Valid(), "ReadReplicas[1].MinConns")
 	config.ReadReplicas[1].MinConns = 10
+	suite.NoError(config.Valid())
+}
+
+func (suite *ConfigTestSuite) TestAcquireDefaultsFromEnv() {
+	suite.T().Setenv("POSTGRES_APPNAME", "test")
+	suite.T().Setenv("POSTGRES_REPLICAPREFIXES", "R1")
+	suite.T().Setenv("R1_NAME", "r1")
+	suite.T().Setenv("R1_ACQUIRETIMEOUT", "750ms")
+	suite.T().Setenv("R1_MAXACQUIREWAITERS", "8")
+	config := ConfigFromEnv()
+	suite.Equal(2*time.Second, config.AcquireTimeout)
+	suite.Equal(int32(0), config.MaxAcquireWaiters)
+	suite.Equal(750*time.Millisecond, config.ReadReplicas[0].AcquireTimeout)
+	suite.Equal(int32(8), config.ReadReplicas[0].MaxAcquireWaiters)
+}
+
+func (suite *ConfigTestSuite) TestValidRejectsNegativeAcquireLimits() {
+	config := &Config{MaxConns: 1, AppName: "test", AcquireTimeout: -time.Second}
+	suite.ErrorContains(config.Valid(), "AcquireTimeout")
+	config.AcquireTimeout = 0
+	config.MaxAcquireWaiters = -1
+	suite.ErrorContains(config.Valid(), "MaxAcquireWaiters")
+	config.MaxAcquireWaiters = 0
+	config.ReadReplicas = []ReadReplicaConfig{{Name: "r1", MaxConns: 1, AcquireTimeout: -1}}
+	suite.ErrorContains(config.Valid(), "ReadReplicas[0].AcquireTimeout")
+	config.ReadReplicas[0].AcquireTimeout = 0
+	config.ReadReplicas[0].MaxAcquireWaiters = -1
+	suite.ErrorContains(config.Valid(), "ReadReplicas[0].MaxAcquireWaiters")
+	config.ReadReplicas[0].MaxAcquireWaiters = 0
 	suite.NoError(config.Valid())
 }

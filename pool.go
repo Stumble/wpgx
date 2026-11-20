@@ -24,8 +24,12 @@ const (
 type Pool struct {
 	pool         *pgxpool.Pool
 	replicaPools map[ReplicaName]*pgxpool.Pool // broken replica will use the primary pool
-	stats        *metricSet
-	tracer       *tracer
+	acquirer     *acquirer
+	// replicaAcquirers has the acquirer of each replica pool; a broken replica
+	// uses the primary's.
+	replicaAcquirers map[ReplicaName]*acquirer
+	stats            *metricSet
+	tracer           *tracer
 
 	// graceful shutdown utilities
 	ctx    context.Context
@@ -119,8 +123,10 @@ func NewPool(ctx context.Context, config *Config) (*Pool, error) {
 		return nil, err
 	}
 	pool := &Pool{
-		pool:         primaryPool,
-		replicaPools: make(map[ReplicaName]*pgxpool.Pool),
+		pool:             primaryPool,
+		replicaPools:     make(map[ReplicaName]*pgxpool.Pool),
+		acquirer:         newAcquirer(primaryPool, config.AcquireTimeout, config.MaxAcquireWaiters),
+		replicaAcquirers: make(map[ReplicaName]*acquirer),
 	}
 	closeCreatedPools := func() {
 		for _, pp := range pool.replicaPools {
@@ -134,6 +140,7 @@ func NewPool(ctx context.Context, config *Config) (*Pool, error) {
 		if replicaConfig.Broken {
 			log.Warn().Msgf("replica %s is broken! Use primary instead.", replicaConfig.Name)
 			pool.replicaPools[replicaConfig.Name] = primaryPool
+			pool.replicaAcquirers[replicaConfig.Name] = pool.acquirer
 			continue
 		}
 		replicaPool, err := newRawPgxPool(ctx, &pgxConfig{
@@ -157,6 +164,8 @@ func NewPool(ctx context.Context, config *Config) (*Pool, error) {
 			return nil, err
 		}
 		pool.replicaPools[replicaConfig.Name] = replicaPool
+		pool.replicaAcquirers[replicaConfig.Name] = newAcquirer(
+			replicaPool, replicaConfig.AcquireTimeout, replicaConfig.MaxAcquireWaiters)
 	}
 	if config.EnableTracing {
 		pool.tracer = newTracer()
@@ -183,14 +192,15 @@ func (p *Pool) updateMetrics(_ context.Context) {
 		}
 		if p.stats != nil {
 			var allStats []pgxPoolStat
-			allStats = append(allStats, pgxPoolStat{replicaName: nil, stats: p.pool.Stat()})
+			allStats = append(allStats, pgxPoolStat{replicaName: nil, stats: p.pool.Stat(), acquirer: p.acquirer})
 			for replicaName, replicaPool := range p.replicaPools {
 				// broken replica, skip
 				if replicaPool == p.pool {
 					continue
 				}
 				name := replicaName
-				allStats = append(allStats, pgxPoolStat{replicaName: &name, stats: replicaPool.Stat()})
+				allStats = append(allStats, pgxPoolStat{
+					replicaName: &name, stats: replicaPool.Stat(), acquirer: p.replicaAcquirers[replicaName]})
 			}
 			p.stats.UpdateConnPoolGauge(allStats)
 		}
@@ -252,7 +262,7 @@ func (p *Pool) PingPrimary(ctx context.Context) error {
 
 // WConn returns a wrapped connection for the primary instance.
 func (p *Pool) WConn() *WConn {
-	return &WConn{p: p.pool, stats: p.stats, tracer: p.tracer}
+	return &WConn{p: p.pool, acq: p.acquirer, stats: p.stats, tracer: p.tracer}
 }
 
 // WQuerier returns a wrapped querier based on the given replica name.
@@ -269,7 +279,7 @@ func (p *Pool) WQuerier(name *ReplicaName) (WQuerier, error) {
 	if pp == p.pool {
 		return p.WConn(), nil
 	}
-	return &WConn{p: pp, stats: p.stats, tracer: p.tracer, replicaName: name}, nil
+	return &WConn{p: pp, acq: p.replicaAcquirers[*name], stats: p.stats, tracer: p.tracer, replicaName: name}, nil
 }
 
 // Transact is a wrapper of pgx.Transaction
