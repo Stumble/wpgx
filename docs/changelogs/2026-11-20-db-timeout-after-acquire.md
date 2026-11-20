@@ -123,7 +123,7 @@ Stumble/bookstore `docs/changelogs/2026-11-20-db-timeout-after-acquire.md`.
   waits from being reported as database timeouts. Within (b), a pre-database
   clock equal to T was rejected because 250ms is far too short as a queueing
   allowance.
-- D1 — Owner-approved model (2026-11-20, US Pacific): the annotation is the
+- D1 — Owner-approved model (2026-11-19, US Pacific): the annotation is the
   database budget; pool waiting is bounded by `max(T, AcquireTimeout)` with a
   2s default (owner raised it from 1s); cache work is bounded by the Redis
   client's own timeouts; `MaxAcquireWaiters` exists but is off by default;
@@ -158,7 +158,8 @@ Stumble/bookstore `docs/changelogs/2026-11-20-db-timeout-after-acquire.md`.
   Redis single flight (always on before v0.3.0, e.g. Stumble/bookstore's
   v0.1.3), an unresponsive Redis is retried until the caller's context ends,
   which the query timeout used to cut short. Found while running the bookstore
-  contracts (2026-11-20).
+  contracts (2026-11-19 US Pacific). Stumble/bookstore moves to dcache v0.4.0
+  so its contract proves the Redis-client bound (round-1 review, R1-06).
 
 ## 4. Implementation Design
 
@@ -196,14 +197,14 @@ Stumble/bookstore `docs/changelogs/2026-11-20-db-timeout-after-acquire.md`.
 
 ### Serial Implementation Checklist
 
-- [ ] wpgx: config fields, validation and tests.
-- [ ] wpgx: budget primitives (context value, errors, acquirer, stmt, wrappers).
-- [ ] wpgx: budgeted WConn/WTx paths with PostgreSQL tests (B1–B5, B7, F1–F3).
-- [ ] wpgx: metrics and span attribute with tests (B6).
-- [ ] wpgx: README and lint/test verification.
-- [ ] sqlc: templates/imports, fixtures, runtime contract tests, docs.
-- [ ] bookstore: regenerate with the new sqlc and bump wpgx.
-- [ ] Cross-agent review, publication, CI.
+- [x] wpgx: config fields, validation and tests.
+- [x] wpgx: budget primitives (context value, errors, acquirer, stmt, wrappers).
+- [x] wpgx: budgeted WConn/WTx paths with PostgreSQL tests (B1–B5, B7, F1–F3).
+- [x] wpgx: metrics and span attribute with tests (B6).
+- [x] wpgx: README and lint/test verification.
+- [x] sqlc: templates/imports, fixtures, runtime contract tests, docs.
+- [x] bookstore: regenerate with the new sqlc and bump wpgx.
+- [x] Cross-agent review; publication and CI tracked in section 7.
 
 ## 5. Verification and E2E Design
 
@@ -231,7 +232,7 @@ Stumble/bookstore `docs/changelogs/2026-11-20-db-timeout-after-acquire.md`.
 
 ## 6. Human Decisions and Interaction
 
-- 2026-11-20 (US Pacific): the owner asked to exclude pool waiting from the
+- 2026-11-19 (US Pacific): the owner asked to exclude pool waiting from the
   sqlc timeout and to keep good defaults with almost no configuration; raised
   the pool-wait default to 2s; agreed to leave `Transact` alone; approved the
   rest of the summarized model; asked to implement through code review and
@@ -242,8 +243,80 @@ Stumble/bookstore `docs/changelogs/2026-11-20-db-timeout-after-acquire.md`.
 
 ## 7. Outcome and Evidence
 
-Pending.
+- Result: statements given `WithDBTimeout` wait for a pooled connection at most
+  `max(T, AcquireTimeout)` (default 2s) and then run under `T` from the moment
+  they have a connection until it is free; sqlc generates this for every query
+  (Stumble/sqlc local record); Stumble/bookstore's runtime contracts prove it
+  end to end. Old generated code is unaffected.
+- B/F/D/R reconciliation:
+
+| ID | Status | Evidence |
+|----|--------|----------|
+| B1 | DONE | `TestDBTimeoutStartsAfterAcquire`, `TestAcquireWaitIsTheLargerOfTimeouts`, `TestZeroAcquireTimeoutMeansDefault`; sqlc `waiting_for_a_connection_does_not_count`; bookstore `TestWickedTimeoutExcludesPoolWait` |
+| B2 | DONE | `TestTransactionStatementTimeout` |
+| B3 | DONE | `TestWithoutDBTimeoutWaitingCountsAgainstTheContext`, `TestDBTimeoutForAnotherStatementIsIgnored`, unchanged legacy branches |
+| B4 | DONE | `TestEveryOperationReportsAcquireTimeout`, `TestDBTimeout`, `TestCallerDeadlineAndCancelWin`, `TestClassifyOnlyWrapsTheBudgetsOwnDeadline` |
+| B5 | DONE | `TestRowsCarryTheStatementContext`, `TestStatementErr`, `TestStatementErrAfterNormalFinish`; sqlc Each tests |
+| B6 | DONE | `TestPhaseMetrics`, `TestBufferedRowsPastTheTimeout`, `TestSpanRecordsAcquireWait` |
+| B7 | DONE | `TestMaxAcquireWaiters`, `TestCanceledCallerIsNotRejectedAsBusy` |
+| B8 | DONE | `TestAcquireDefaultsFromEnv`, `TestNewAcquirerDefaultsTheTimeout` |
+| F1–F4 | DONE | tests above; `TestValidRejectsNegativeAcquireLimits` |
+| F5 | DONE | `TestSlowBeforeAcquireCannotOutlastTheWait`, `TestCanceledCallerIsNotRejectedAsBusy` |
+| F6 | DONE | `TestScanErrorReleasesTheConnection`, `TestPanicsReleaseTheConnection` |
+| F7 | DONE | `TestBufferedRowsPastTheTimeout`; sqlc `draining_past_the_timeout_after_an_early_stop_fails` |
+| D1–D5 | DONE | as designed; `ContextErr` became `StatementErr` (below) |
+| R1–R3, R5 | ACCEPTED | documented, unchanged by design |
+| R4 | DONE | pins in sqlc/bookstore at the wpgx branch commit until a tag exists |
+| R6 | DONE for Alva/bookstore | Alva services use dcache v0.4.0 without Redis single flight; bookstore moved to it; sqlc GUIDE states the precondition |
+
+- Deviations from section 4 (non-material, reviewed): `ContextErr` was replaced
+  by `StatementErr(ctx, err)` so Each can also mark a visitor's deadline error
+  and a database timeout that expired while draining buffered rows; buffered
+  rows read after `T` keep succeeding (F7) while the expiry is counted and
+  visible through `StatementErr`; the generator reserves the identifier `wpgx`.
+- Verification (final content; `GOMAXPROCS=2`, `-p 1`, disposable PostgreSQL 16
+  at 127.0.0.1:55491; Go 1.27.3 host toolchain):
+  - wpgx at 4b29cac: `go build ./...`, `go vet ./...` pass;
+    `ENV=test POSTGRES_APPNAME=wpgx POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=55491 go test -race -count=1 -p 1 ./...`
+    pass (wpgx, examples, testsuite); `make lint` with golangci-lint v2.14.0
+    (CI version, checksum-verified release binary): 0 issues.
+  - Mutation checks: starting T before acquire fails
+    `TestDBTimeoutStartsAfterAcquire`; reverting the round-1 fixes fails all
+    five round-1 regressions without hanging.
+  - sqlc and bookstore commands and results: their local records, section 7.
+- Cross-agent review: Codex reviewer session
+  `5e2002b6-dea5-4c53-96c9-cde8cdd6a84b` (env-woddv6j0), created by this main
+  session `425998b5-747f-44a4-b7fe-52d8f4eabf6f` with `--parent`; verified
+  agent codex, same environment, `treeParentId` = main session, listed in the
+  main session's tree. Reports (sha256):
+
+| Round | wpgx / sqlc / bookstore | Verdict | Report sha256 |
+|-------|-------------------------|---------|---------------|
+| 1 | 41c11ed / ef2ba2e49 / 5ed193b | changes (R1-01…07) | f6cafc8362049a943f98e83f0c81d81e636bcb40fa709116b0574ea1085d59af |
+| 2 | 542c6a2 / 8a232006a / 7c570eb | changes (R2-01…03) | 0c0e6dd4a703a1d73a70db2b473660358baf317862640d064d549f017a2f2bbb |
+| 3 | 4b29cac / e002f1d3f / c402ccb | changes (R3-01) | 8fd60f07702aaf3cc42b1eeae4c0c5e9b972e199b1fcab0191969b4a78f74f62 |
+| 4 | 4b29cac / e002f1d3f / 53d04b4 | ACCEPT | 2fe72bbdba487d3efb14f48b8728a7d2132c3d612174e727db07dfbafce083a6 |
+| 5 (pins) | 4b29cac / 5291d2071 / 89b3fbc | ACCEPT | 8431ffd47f85ff6a3992ac4a6906756c1e70557677a734c937515c09adf3fcbc |
+
+  Dispositions: R1-01/02/03/05/06/07, R2-01/02/03 and R3-01 accepted and fixed
+  with regressions (each mutation-checked); R1-04 accepted for the metric and
+  for Each, rejected for failing ordinary buffered reads (compatibility with
+  the previous `:many` and pgxpool), and the reviewer agreed in round 2. The
+  author accepts the same final content. Afterwards only these records changed
+  (dates corrected to US Pacific, checklist ticked, sections 7–8).
+- PR/CI outcome: see section 8 and the PRs.
 
 ## 8. Remaining Work
 
-Pending.
+- Owner: review and merge in order — wpgx PR, tag a wpgx minor release;
+  bookstore PR after bumping its wpgx pin to the tag; sqlc PR after bumping the
+  testdata pin and the wicked CI bookstore ref to the merged bookstore commit;
+  then tag sqlc. The pins currently name the wpgx branch commit
+  `v0.5.2-0.20261120053742-4b29cac2136d`.
+- Rollout (separate, owner-approved later): upgrade one consumer first —
+  worldline, whose queueing is in the app pool — and compare
+  `wpgx_timeout_total{phase}` and `wpgx_acquire_wait_milliseconds` on STG.
+- Known limitations (unchanged by design): PgBouncer queueing after `Acquire`
+  counts as database time; a client timeout does not cancel the server
+  statement; dcache with Redis single flight retries an unresponsive Redis
+  until the caller's deadline.
