@@ -66,7 +66,9 @@ Stumble/bookstore `docs/changelogs/2026-11-20-db-timeout-after-acquire.md`.
   cancellation errors are returned unchanged.
 - B5 — `Rows` returned under a database timeout implement
   `Context() context.Context`, the statement context, so a row visitor can
-  observe the same deadline.
+  observe the same deadline. `ContextErr(ctx)` returns `ctx.Err()`, matching
+  `ErrDBTimeout` when the statement's database timeout ended `ctx` (a
+  caller's own cancellation cause is not substituted).
 - B6 — Existing metrics keep their meaning. New: `wpgx_acquire_wait_milliseconds`
   {app, replica}, `wpgx_db_latency_milliseconds` {app, op, replica},
   `wpgx_timeout_total` {app, op, replica, phase=acquire|db}, and new
@@ -138,6 +140,13 @@ Stumble/bookstore `docs/changelogs/2026-11-20-db-timeout-after-acquire.md`.
   pseudo-version from this branch; merge order matters (section 4).
 - R5 — Wrappers that hide `Rows.Context()` make generated Each visitors fall
   back to the caller's context; the row stream is still bounded by wpgx.
+- R6 — Cache lookups are bounded by the Redis client's timeouts only with
+  dcache v0.3.0+ and Redis single flight off (the default; every Alva service
+  is on dcache v0.4.0 and none enables `EnableRedisSingleFlightOption`). With
+  Redis single flight (always on before v0.3.0, e.g. Stumble/bookstore's
+  v0.1.3), an unresponsive Redis is retried until the caller's context ends,
+  which the query timeout used to cut short. Found while running the bookstore
+  contracts (2026-11-20).
 
 ## 4. Implementation Design
 

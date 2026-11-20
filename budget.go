@@ -86,6 +86,17 @@ func WithDBTimeout(ctx context.Context, name string, timeout time.Duration) cont
 	return context.WithValue(ctx, dbTimeoutKey{}, dbTimeout{name: name, timeout: timeout})
 }
 
+// ContextErr returns ctx.Err(). When the database timeout of a statement
+// context (see Rows.Context under WithDBTimeout) ended @p ctx, the error also
+// matches ErrDBTimeout.
+func ContextErr(ctx context.Context) error {
+	err := ctx.Err()
+	if err != nil && context.Cause(ctx) == dbTimeoutCause {
+		return &budgetError{budget: ErrDBTimeout, err: err}
+	}
+	return err
+}
+
 // dbTimeoutOf returns the database timeout that @p ctx gives to statement @p name.
 func dbTimeoutOf(ctx context.Context, name string) (time.Duration, bool) {
 	v, ok := ctx.Value(dbTimeoutKey{}).(dbTimeout)

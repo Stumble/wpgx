@@ -59,3 +59,21 @@ func TestNewAcquirerDefaultsTheTimeout(t *testing.T) {
 	require.Equal(t, DefaultAcquireTimeout, newAcquirer(nil, 0, 0).timeout)
 	require.Equal(t, time.Second, newAcquirer(nil, time.Second, 0).timeout)
 }
+
+func TestContextErr(t *testing.T) {
+	require.NoError(t, ContextErr(context.Background()))
+
+	canceled, cancel := context.WithCancelCause(context.Background())
+	custom := errors.New("caller's cause")
+	cancel(custom)
+	require.Equal(t, context.Canceled, ContextErr(canceled), "a caller's cause is not reported")
+
+	stmtCtx, stop := context.WithTimeoutCause(context.Background(), time.Nanosecond, dbTimeoutCause)
+	defer stop()
+	visitor, stopVisitor := context.WithCancel(stmtCtx) // a visitor may derive its own context
+	defer stopVisitor()
+	<-visitor.Done()
+	err := ContextErr(visitor)
+	require.ErrorIs(t, err, ErrDBTimeout)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
