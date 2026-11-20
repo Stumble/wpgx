@@ -24,6 +24,10 @@ const (
 	// replicaKey is the wpgx instance that ran the operation: "primary" or a
 	// replica name. The semantic conventions have no attribute for it.
 	replicaKey = attribute.Key("wpgx.replica")
+
+	// acquireWaitKey is how long, in milliseconds, a statement run with a
+	// database timeout waited for a pooled connection.
+	acquireWaitKey = attribute.Key("wpgx.acquire_wait_ms")
 )
 
 type tracer struct {

@@ -28,6 +28,9 @@ type ReadReplicaConfig struct {
 	MinIdleConns    int32         `default:"0"`
 	MaxConnLifetime time.Duration `default:"6h"`
 	MaxConnIdleTime time.Duration `default:"1m"`
+	// AcquireTimeout and MaxAcquireWaiters apply to this replica's pool, see Config.
+	AcquireTimeout    time.Duration `default:"2s"`
+	MaxAcquireWaiters int32         `default:"0"`
 	// AfterConnect is called once for each new connection, see Config.AfterConnect.
 	AfterConnect func(context.Context, *pgx.Conn) error `ignored:"true"`
 	// BeforeAcquire is a function that is called before acquiring a connection.
@@ -51,6 +54,18 @@ type Config struct {
 	MinIdleConns    int32         `default:"0"`
 	MaxConnLifetime time.Duration `default:"6h"`
 	MaxConnIdleTime time.Duration `default:"1m"`
+	// AcquireTimeout bounds how long a statement run with a database timeout
+	// (see WithDBTimeout) waits for a pooled connection: it waits at most the
+	// larger of AcquireTimeout and its own database timeout, and never past
+	// its context. Zero means DefaultAcquireTimeout. Other operations wait
+	// within their context only.
+	AcquireTimeout time.Duration `default:"2s"`
+	// MaxAcquireWaiters caps how many statements run with a database timeout
+	// may wait for a pooled connection at the same time. A statement beyond
+	// the cap fails at once with ErrTooManyAcquireWaiters. The count includes
+	// statements that are taking an idle connection, so set it well above
+	// MaxConns. Zero means no cap.
+	MaxAcquireWaiters int32 `default:"0"`
 	// AfterConnect is called once for each new connection, before it is added to
 	// the pool; a returned error discards the connection. Use it for setup that
 	// lasts for the connection's lifetime, such as registering types on
@@ -77,6 +92,12 @@ func (c *Config) Valid() error {
 	if c.MinConns > c.MaxConns {
 		return fmt.Errorf("MinConns must <= MaxConns, incorrect config: %s", c)
 	}
+	if c.AcquireTimeout < 0 {
+		return fmt.Errorf("AcquireTimeout must not be negative, incorrect config: %s", c)
+	}
+	if c.MaxAcquireWaiters < 0 {
+		return fmt.Errorf("MaxAcquireWaiters must not be negative, incorrect config: %s", c)
+	}
 	if len(c.AppName) == 0 || len(c.AppName) > AppNameLengthMax {
 		return fmt.Errorf("invalid AppName: %s", c)
 	}
@@ -93,6 +114,12 @@ func (c *Config) Valid() error {
 		}
 		if replica.MinConns > replica.MaxConns {
 			return fmt.Errorf("ReadReplicas[%d].MinConns must <= MaxConns, incorrect config: %s", i, c)
+		}
+		if replica.AcquireTimeout < 0 {
+			return fmt.Errorf("ReadReplicas[%d].AcquireTimeout must not be negative, incorrect config: %s", i, c)
+		}
+		if replica.MaxAcquireWaiters < 0 {
+			return fmt.Errorf("ReadReplicas[%d].MaxAcquireWaiters must not be negative, incorrect config: %s", i, c)
 		}
 		if string(replica.Name) == c.AppName {
 			return fmt.Errorf("ReadReplicas[%d].Name must be different from AppName: %s", i, c)
