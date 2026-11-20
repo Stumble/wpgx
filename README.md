@@ -36,8 +36,10 @@ row := pool.WConn().WQueryRow(ctx, "GetBook", sql, id)
 - An expired wait matches `wpgx.ErrAcquireTimeout` and an expired `T` matches
   `wpgx.ErrDBTimeout`; both also match `context.DeadlineExceeded`.
 - `Rows` returned under a database timeout have a `Context() context.Context`
-  method returning the statement's context. `wpgx.ContextErr(ctx)` returns
-  `ctx.Err()`, matching `ErrDBTimeout` when the database timeout ended it.
+  method returning the statement's context. `wpgx.StatementErr(ctx, err)`
+  marks a deadline error from that context with `ErrDBTimeout`, and for a nil
+  `err` reports whether the database timeout expired (finishing the rows
+  cancels the context; that is not an error).
 - The timeout applies only to operations named `name`; nested statements with
   other names are not affected. Without it, operations behave as before.
 

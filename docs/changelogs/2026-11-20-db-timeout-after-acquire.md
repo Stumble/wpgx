@@ -66,9 +66,10 @@ Stumble/bookstore `docs/changelogs/2026-11-20-db-timeout-after-acquire.md`.
   cancellation errors are returned unchanged.
 - B5 — `Rows` returned under a database timeout implement
   `Context() context.Context`, the statement context, so a row visitor can
-  observe the same deadline. `ContextErr(ctx)` returns `ctx.Err()`, matching
-  `ErrDBTimeout` when the statement's database timeout ended `ctx` (a
-  caller's own cancellation cause is not substituted).
+  observe the same deadline. `StatementErr(ctx, err)` marks a deadline error
+  of that context with `ErrDBTimeout` (a caller's own cancellation cause is not
+  substituted) and, for a nil `err`, reports an expired database timeout while
+  ignoring the cancellation that finishing the rows causes.
 - B6 — Existing metrics keep their meaning. New: `wpgx_acquire_wait_milliseconds`
   {app, replica}, `wpgx_db_latency_milliseconds` {app, op, replica},
   `wpgx_timeout_total` {app, op, replica, phase=acquire|db}, and new
@@ -97,7 +98,7 @@ Stumble/bookstore `docs/changelogs/2026-11-20-db-timeout-after-acquire.md`.
   `Close`, as pgxpool rows do; a panic in an argument encoder or row scanner
   frees it too.
 - F7 — Rows already buffered before T expires can still be read and the rows
-  report no error; the statement context reports the expiry (`ContextErr`
+  report no error; the statement context reports the expiry (`StatementErr`
   matches `ErrDBTimeout`) and `wpgx_timeout_total{phase="db"}` counts every
   statement whose T expired before it finished.
 - Compatibility: `WQuerier`/`WGConn` and all signatures are unchanged.

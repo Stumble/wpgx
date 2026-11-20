@@ -507,6 +507,10 @@ func (suite *dbTimeoutTestSuite) TestPanicsReleaseTheConnection() {
 		_, _ = conn.WQuery(ctxFor("query_panic"), "query_panic", "SELECT $1::text", panicValuer{})
 	}))
 	suite.assertFree(pool, "after a Query panic")
+	suite.Equal("encoder panic", recovered(func() {
+		_ = conn.WQueryRow(ctxFor("row_panic"), "row_panic", "SELECT $1::text", panicValuer{})
+	}))
+	suite.assertFree(pool, "after a QueryRow encoder panic")
 	suite.Equal("scanner panic", recovered(func() {
 		_ = conn.WQueryRow(ctxFor("scan_panic"), "scan_panic", "SELECT 1").Scan(panicScanner{})
 	}))
@@ -572,7 +576,7 @@ func (suite *dbTimeoutTestSuite) TestBufferedRowsPastTheTimeout() {
 	stmtCtx := rows.(interface{ Context() context.Context }).Context()
 	suite.Require().True(rows.Next())
 	time.Sleep(200 * time.Millisecond)
-	err = wpgx.ContextErr(stmtCtx)
+	err = wpgx.StatementErr(stmtCtx, stmtCtx.Err())
 	suite.ErrorIs(err, wpgx.ErrDBTimeout, "a row visitor sees the expired database timeout")
 	suite.ErrorIs(err, context.DeadlineExceeded)
 	var n int
@@ -580,7 +584,22 @@ func (suite *dbTimeoutTestSuite) TestBufferedRowsPastTheTimeout() {
 	suite.False(rows.Next())
 	suite.NoError(rows.Err(), "rows received in time are not discarded")
 	rows.Close()
+	suite.ErrorIs(wpgx.StatementErr(stmtCtx, rows.Err()), wpgx.ErrDBTimeout,
+		"after closing, the expiry is still visible to a caller that asks")
 	m, ok := gatheredMetric("wpgx_timeout_total", map[string]string{"app": app, "op": "buffered", "phase": "db"})
 	suite.True(ok)
 	suite.Equal(1.0, m.GetCounter().GetValue(), "the expired database timeout is counted")
+}
+
+func (suite *dbTimeoutTestSuite) TestStatementErrAfterNormalFinish() {
+	pool := suite.newPool()
+	ctx := wpgx.WithDBTimeout(context.Background(), "finished", time.Second)
+	rows, err := pool.WConn().WQuery(ctx, "finished", "SELECT 1")
+	suite.Require().NoError(err)
+	stmtCtx := rows.(interface{ Context() context.Context }).Context()
+	for rows.Next() {
+	}
+	rows.Close()
+	suite.Error(stmtCtx.Err(), "finishing cancels the statement context")
+	suite.NoError(wpgx.StatementErr(stmtCtx, rows.Err()), "that cancellation is not a database timeout")
 }

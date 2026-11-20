@@ -3,6 +3,7 @@ package wpgx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -60,20 +61,31 @@ func TestNewAcquirerDefaultsTheTimeout(t *testing.T) {
 	require.Equal(t, time.Second, newAcquirer(nil, time.Second, 0).timeout)
 }
 
-func TestContextErr(t *testing.T) {
-	require.NoError(t, ContextErr(context.Background()))
+func TestStatementErr(t *testing.T) {
+	require.NoError(t, StatementErr(context.Background(), nil))
+	other := errors.New("visitor failed")
+	require.Equal(t, other, StatementErr(context.Background(), other))
 
 	canceled, cancel := context.WithCancelCause(context.Background())
 	custom := errors.New("caller's cause")
 	cancel(custom)
-	require.Equal(t, context.Canceled, ContextErr(canceled), "a caller's cause is not reported")
+	require.Equal(t, context.Canceled, StatementErr(canceled, canceled.Err()), "a caller's cause is not reported")
+	require.NoError(t, StatementErr(canceled, nil), "cancellation alone is not a database timeout")
 
 	stmtCtx, stop := context.WithTimeoutCause(context.Background(), time.Nanosecond, dbTimeoutCause)
 	defer stop()
 	visitor, stopVisitor := context.WithCancel(stmtCtx) // a visitor may derive its own context
 	defer stopVisitor()
 	<-visitor.Done()
-	err := ContextErr(visitor)
-	require.ErrorIs(t, err, ErrDBTimeout)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	for _, err := range []error{
+		StatementErr(visitor, visitor.Err()),
+		StatementErr(visitor, nil),
+		StatementErr(visitor, fmt.Errorf("visit: %w", visitor.Err())),
+	} {
+		require.ErrorIs(t, err, ErrDBTimeout)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	}
+	require.Equal(t, other, StatementErr(visitor, other), "unrelated errors stay primary")
+	marked := StatementErr(visitor, visitor.Err())
+	require.Equal(t, marked, StatementErr(visitor, marked), "an error is marked once")
 }

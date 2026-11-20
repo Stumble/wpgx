@@ -68,7 +68,12 @@ func (c *WConn) WQueryRow(ctx context.Context, name string, unprepared string, a
 		if err != nil {
 			return o.row(errRow{err: err})
 		}
-		return &stmtRow{Row: o.row(s.conn.QueryRow(s.ctx, unprepared, args...)), s: s}
+		// pgx QueryRow encodes the arguments and sends the query right away.
+		handedOff := false
+		defer s.guard(&handedOff)()
+		row := o.row(s.conn.QueryRow(s.ctx, unprepared, args...))
+		handedOff = true
+		return &stmtRow{Row: row, s: s}
 	}
 	return o.row(c.p.QueryRow(ctx, unprepared, args...))
 }

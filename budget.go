@@ -53,7 +53,8 @@ var (
 // deadline of @p ctx, a context created with @p cause, rather than of its
 // parent.
 func classify(ctx context.Context, cause *budgetError, err error) error {
-	if err == nil || context.Cause(ctx) != cause || !errors.Is(err, context.DeadlineExceeded) {
+	if err == nil || context.Cause(ctx) != cause || !errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, cause.budget) {
 		return err
 	}
 	return &budgetError{budget: cause.budget, err: err}
@@ -90,15 +91,27 @@ func WithDBTimeout(ctx context.Context, name string, timeout time.Duration) cont
 	return context.WithValue(ctx, dbTimeoutKey{}, dbTimeout{name: name, timeout: timeout})
 }
 
-// ContextErr returns ctx.Err(). When the database timeout of a statement
-// context (see Rows.Context under WithDBTimeout) ended @p ctx, the error also
-// matches ErrDBTimeout.
-func ContextErr(ctx context.Context) error {
-	err := ctx.Err()
-	if err != nil && context.Cause(ctx) == dbTimeoutCause {
-		return &budgetError{budget: ErrDBTimeout, err: err}
+// StatementErr returns the error to report for work done under @p ctx, a
+// statement context (Rows.Context under WithDBTimeout) or one derived from it,
+// that ended with @p err:
+//
+//   - a non-nil @p err, also matching ErrDBTimeout when it is the deadline of
+//     the statement's database timeout;
+//   - for a nil @p err, an error matching ErrDBTimeout and
+//     context.DeadlineExceeded if that database timeout has expired, and nil
+//     otherwise. Finishing the rows cancels the statement context; that is
+//     not an error.
+//
+// For example, a row visitor checks StatementErr(ctx, ctx.Err()), and a reader
+// that stopped early checks StatementErr(ctx, rows.Err()) after closing rows.
+func StatementErr(ctx context.Context, err error) error {
+	if err != nil {
+		return classify(ctx, dbTimeoutCause, err)
 	}
-	return err
+	if context.Cause(ctx) == dbTimeoutCause {
+		return dbTimeoutCause
+	}
+	return nil
 }
 
 // dbTimeoutOf returns the database timeout that @p ctx gives to statement @p name.
