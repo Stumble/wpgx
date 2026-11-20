@@ -89,6 +89,17 @@ Stumble/bookstore `docs/changelogs/2026-11-20-db-timeout-after-acquire.md`.
 - F3 — Caller deadline or cancellation during waiting or execution: the
   caller's error, promptly, with no leak.
 - F4 — Negative `AcquireTimeout` or `MaxAcquireWaiters`: `Config.Valid` fails.
+- F5 — A connection that pgxpool hands over after the wait ended (a slow
+  `BeforeAcquire` hook) is released and the statement fails with the wait's
+  error; a caller canceled before admission gets its own error, not
+  `ErrTooManyAcquireWaiters`.
+- F6 — A scan or `Values` error on budgeted rows frees the connection without
+  `Close`, as pgxpool rows do; a panic in an argument encoder or row scanner
+  frees it too.
+- F7 — Rows already buffered before T expires can still be read and the rows
+  report no error; the statement context reports the expiry (`ContextErr`
+  matches `ErrDBTimeout`) and `wpgx_timeout_total{phase="db"}` counts every
+  statement whose T expired before it finished.
 - Compatibility: `WQuerier`/`WGConn` and all signatures are unchanged.
   Wrappers that forward the context (for example connection diagnostics)
   get the new behavior automatically.

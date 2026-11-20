@@ -28,13 +28,14 @@ func (c *WConn) PostExec(fn PostExecFunc) error {
 func (c *WConn) start(ctx context.Context, o *op, name string, timeout time.Duration) (*stmt, error) {
 	startedAt := time.Now()
 	conn, err := c.acq.acquire(ctx, timeout)
+	var s *stmt
+	if err == nil {
+		s = startStmt(ctx, timeout, conn, c.stats, name, c.replicaName)
+	}
 	wait := time.Since(startedAt)
 	c.stats.observeAcquire(name, c.replicaName, wait, err)
 	o.acquired(wait)
-	if err != nil {
-		return nil, err
-	}
-	return startStmt(ctx, timeout, conn, c.stats, name, c.replicaName), nil
+	return s, err
 }
 
 func (c *WConn) WQuery(ctx context.Context, name string, unprepared string, args ...interface{}) (pgx.Rows, error) {
@@ -45,12 +46,15 @@ func (c *WConn) WQuery(ctx context.Context, name string, unprepared string, args
 			o.end(err)
 			return errRows{err: err}, err
 		}
+		handedOff := false
+		defer s.guard(&handedOff)()
 		rows, err := s.conn.Query(s.ctx, unprepared, args...)
 		if err != nil {
 			err = s.finish(err)
 			o.end(err)
 			return errRows{err: err}, err
 		}
+		handedOff = true
 		return &stmtRows{Rows: o.rows(rows, nil), s: s}, nil
 	}
 	rows, err := c.p.Query(ctx, unprepared, args...)
@@ -77,7 +81,10 @@ func (c *WConn) WExec(ctx context.Context, name string, unprepared string, args 
 		if s, err = c.start(ctx, o, name, timeout); err != nil {
 			return cmd, err
 		}
+		done := false
+		defer s.guard(&done)()
 		cmd, err = s.conn.Exec(s.ctx, unprepared, args...)
+		done = true
 		return cmd, s.finish(err)
 	}
 	cmd, err = c.p.Exec(ctx, unprepared, args...)
@@ -93,7 +100,10 @@ func (c *WConn) WCopyFrom(
 		if s, err = c.start(ctx, o, name, timeout); err != nil {
 			return n, err
 		}
+		done := false
+		defer s.guard(&done)()
 		n, err = s.conn.CopyFrom(s.ctx, tableName, columnNames, rowSrc)
+		done = true
 		return n, s.finish(err)
 	}
 	n, err = c.p.CopyFrom(ctx, tableName, columnNames, rowSrc)

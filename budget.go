@@ -3,6 +3,7 @@ package wpgx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +27,9 @@ var (
 	// ErrTooManyAcquireWaiters is returned by a statement run with a database
 	// timeout when MaxAcquireWaiters statements already wait for a connection.
 	ErrTooManyAcquireWaiters = errors.New("wpgx: too many statements waiting for a database connection")
+
+	// errStatementPanicked finishes a statement abandoned by a panic.
+	errStatementPanicked = errors.New("wpgx: statement panicked")
 )
 
 // budgetError reports which wpgx budget expired. It matches both the budget's
@@ -123,8 +127,12 @@ func newAcquirer(pool *pgxpool.Pool, timeout time.Duration, maxWaiters int32) *a
 }
 
 // acquire waits for a connection at most the larger of @p dbTimeout and the
-// pool's AcquireTimeout, and never past @p ctx.
+// pool's AcquireTimeout, and never past @p ctx. A connection is returned only
+// while that wait has not ended.
 func (a *acquirer) acquire(ctx context.Context, dbTimeout time.Duration) (*pgxpool.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	n := a.waiting.Add(1)
 	defer a.waiting.Add(-1)
 	if a.maxWaiters > 0 && n > a.maxWaiters {
@@ -134,6 +142,18 @@ func (a *acquirer) acquire(ctx context.Context, dbTimeout time.Duration) (*pgxpo
 	actx, cancel := context.WithTimeoutCause(ctx, max(dbTimeout, a.timeout), acquireTimeoutCause)
 	defer cancel()
 	conn, err := a.pool.Acquire(actx)
+	if ended := actx.Err(); ended != nil {
+		switch {
+		case err == nil:
+			// pgxpool runs PrepareConn (BeforeAcquire) after taking a
+			// connection, so a slow hook can return one after the wait ended.
+			conn.Release()
+			conn, err = nil, ended
+		case !errors.Is(err, ended):
+			// For example pgxpool giving up after hooks rejected connections.
+			err = fmt.Errorf("%w: %w", ended, err)
+		}
+	}
 	return conn, classify(actx, acquireTimeoutCause, err)
 }
 
@@ -169,12 +189,26 @@ func (s *stmt) finish(err error) error {
 		return err
 	}
 	s.finished = true
+	// Whether the database timeout ended the statement context before the
+	// statement finished, even if every row was already buffered.
+	timedOut := context.Cause(s.ctx) == dbTimeoutCause
 	s.cancel()
 	if s.conn != nil {
 		s.conn.Release()
 	}
-	s.stats.observeDB(s.name, s.replica, s.startedAt, err)
+	s.stats.observeDB(s.name, s.replica, s.startedAt, timedOut)
 	return err
+}
+
+// guard returns a function to defer while the caller owns the statement: unless
+// disarmed by setting *@p handedOff, it finishes the statement, so a panic
+// does not keep the connection.
+func (s *stmt) guard(handedOff *bool) func() {
+	return func() {
+		if !*handedOff && !s.finished {
+			_ = s.finish(errStatementPanicked)
+		}
+	}
 }
 
 // stmtRows are the rows of a statement running under a database timeout. The
@@ -197,6 +231,24 @@ func (r *stmtRows) Close() {
 	_ = r.s.finish(r.Rows.Err()) // Err reports the classified error
 }
 
+// Scan and Values close the rows on error, as pgxpool rows do, so the
+// connection is not kept by a caller that stops at the error.
+func (r *stmtRows) Scan(dest ...any) error {
+	err := r.Rows.Scan(dest...)
+	if err != nil {
+		r.Close()
+	}
+	return err
+}
+
+func (r *stmtRows) Values() ([]any, error) {
+	values, err := r.Rows.Values()
+	if err != nil {
+		r.Close()
+	}
+	return values, err
+}
+
 func (r *stmtRows) Err() error {
 	return r.s.classify(r.Rows.Err())
 }
@@ -215,7 +267,11 @@ type stmtRow struct {
 }
 
 func (r *stmtRow) Scan(dest ...any) error {
-	return r.s.finish(r.Row.Scan(dest...))
+	scanned := false
+	defer r.s.guard(&scanned)()
+	err := r.Row.Scan(dest...)
+	scanned = true
+	return r.s.finish(err)
 }
 
 // errRows are the rows of a statement that failed before it was sent.

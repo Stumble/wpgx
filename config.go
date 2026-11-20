@@ -58,7 +58,9 @@ type Config struct {
 	// (see WithDBTimeout) waits for a pooled connection: it waits at most the
 	// larger of AcquireTimeout and its own database timeout, and never past
 	// its context. Zero means DefaultAcquireTimeout. Other operations wait
-	// within their context only.
+	// within their context only. The wait includes the BeforeAcquire hook,
+	// which should return promptly once its context ends: a connection it
+	// accepts after the wait ended is released and the statement fails.
 	AcquireTimeout time.Duration `default:"2s"`
 	// MaxAcquireWaiters caps how many statements run with a database timeout
 	// may wait for a pooled connection at the same time. A statement beyond

@@ -2,6 +2,7 @@ package testsuite_test
 
 import (
 	"context"
+	"database/sql/driver"
 	"testing"
 	"time"
 
@@ -49,9 +50,11 @@ func (suite *dbTimeoutTestSuite) newPool(opts ...poolOption) *wpgx.Pool {
 	pool, err := wpgx.NewPool(context.Background(), &config)
 	suite.Require().NoError(err)
 	suite.T().Cleanup(func() {
-		suite.Eventually(func() bool { return pool.RawPrimaryPool().Stat().AcquiredConns() == 0 },
-			5*time.Second, 10*time.Millisecond, "a statement left its connection acquired")
-		pool.Close()
+		// Close would block forever on a leaked connection; the failure is enough.
+		if suite.Eventually(func() bool { return pool.RawPrimaryPool().Stat().AcquiredConns() == 0 },
+			5*time.Second, 10*time.Millisecond, "a statement left its connection acquired") {
+			pool.Close()
+		}
 	})
 	return pool
 }
@@ -446,4 +449,138 @@ func (suite *dbTimeoutTestSuite) TestSpanRecordsAcquireWait() {
 		}
 	}
 	suite.True(found)
+}
+
+// assertFree checks that the pool's only connection can be taken at once.
+func (suite *dbTimeoutTestSuite) assertFree(pool *wpgx.Pool, msg string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	conn, err := pool.RawPrimaryPool().Acquire(ctx)
+	suite.Require().NoError(err, msg)
+	conn.Release()
+}
+
+func (suite *dbTimeoutTestSuite) TestScanErrorReleasesTheConnection() {
+	pool := suite.newPool()
+	ctx := wpgx.WithDBTimeout(context.Background(), "scan_error", time.Second)
+	rows, err := pool.WConn().WQuery(ctx, "scan_error", "SELECT 1")
+	suite.Require().NoError(err)
+	suite.Require().True(rows.Next())
+	suite.Error(rows.Scan(), "no destinations for one column")
+	suite.assertFree(pool, "a scan error frees the connection without Close")
+	rows.Close()
+
+	rows, err = pool.WConn().WQuery(wpgx.WithDBTimeout(context.Background(), "values_error", time.Second),
+		"values_error", "SELECT 1")
+	suite.Require().NoError(err)
+	suite.Require().True(rows.Next())
+	_, _ = rows.Values()
+	rows.Close()
+	suite.assertFree(pool, "Values and Close free the connection")
+}
+
+type panicValuer struct{}
+
+func (panicValuer) Value() (driver.Value, error) { panic("encoder panic") }
+
+type panicScanner struct{}
+
+func (panicScanner) ScanRow(pgx.Rows) error { panic("scanner panic") }
+
+func (suite *dbTimeoutTestSuite) TestPanicsReleaseTheConnection() {
+	pool := suite.newPool()
+	conn := pool.WConn()
+	recovered := func(f func()) (p any) {
+		defer func() { p = recover() }()
+		f()
+		return nil
+	}
+	ctxFor := func(name string) context.Context {
+		return wpgx.WithDBTimeout(context.Background(), name, time.Second)
+	}
+
+	suite.Equal("encoder panic", recovered(func() {
+		_, _ = conn.WExec(ctxFor("exec_panic"), "exec_panic", "SELECT $1::text", panicValuer{})
+	}))
+	suite.assertFree(pool, "after an Exec panic")
+	suite.Equal("encoder panic", recovered(func() {
+		_, _ = conn.WQuery(ctxFor("query_panic"), "query_panic", "SELECT $1::text", panicValuer{})
+	}))
+	suite.assertFree(pool, "after a Query panic")
+	suite.Equal("scanner panic", recovered(func() {
+		_ = conn.WQueryRow(ctxFor("scan_panic"), "scan_panic", "SELECT 1").Scan(panicScanner{})
+	}))
+	suite.assertFree(pool, "after a Row.Scan panic")
+
+	n, err := scanInt(conn.WQueryRow(ctxFor("after_panics"), "after_panics", "SELECT 3"))
+	suite.NoError(err)
+	suite.Equal(3, n)
+}
+
+func (suite *dbTimeoutTestSuite) TestSlowBeforeAcquireCannotOutlastTheWait() {
+	pool := suite.newPool(func(c *wpgx.Config) {
+		c.AcquireTimeout = 100 * time.Millisecond
+		c.BeforeAcquire = func(ctx context.Context, _ *pgx.Conn) bool {
+			<-ctx.Done() // a hook that ignores the deadline and then accepts
+			return true
+		}
+	})
+	ctx := wpgx.WithDBTimeout(context.Background(), "slow_hook", 10*time.Millisecond)
+	elapsed, err := timed(func() error {
+		_, err := pool.WConn().WExec(ctx, "slow_hook", "SELECT 1")
+		return err
+	})
+	suite.ErrorIs(err, wpgx.ErrAcquireTimeout, "a connection handed over after the wait is not used")
+	suite.Less(elapsed, time.Second)
+}
+
+func (suite *dbTimeoutTestSuite) TestCanceledCallerIsNotRejectedAsBusy() {
+	pool := suite.newPool(func(c *wpgx.Config) {
+		c.AcquireTimeout = 5 * time.Second
+		c.MaxAcquireWaiters = 1
+	})
+	release := suite.hold(pool)
+	waiter := make(chan error, 1)
+	go func() {
+		ctx := wpgx.WithDBTimeout(context.Background(), "waiter", time.Second)
+		_, err := scanInt(pool.WConn().WQueryRow(ctx, "waiter", "SELECT 1"))
+		waiter <- err
+	}()
+	time.Sleep(200 * time.Millisecond)
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := scanInt(pool.WConn().WQueryRow(wpgx.WithDBTimeout(canceled, "canceled", time.Second), "canceled", "SELECT 1"))
+	suite.ErrorIs(err, context.Canceled)
+	suite.NotErrorIs(err, wpgx.ErrTooManyAcquireWaiters)
+
+	release()
+	suite.NoError(<-waiter)
+}
+
+// Rows already buffered can still be read after the database timeout; the
+// statement context reports the expiry and the metric counts it.
+func (suite *dbTimeoutTestSuite) TestBufferedRowsPastTheTimeout() {
+	const app = "budget_buffered"
+	pool := suite.newPool(func(c *wpgx.Config) {
+		c.AppName = app
+		c.EnablePrometheus = true
+	})
+	ctx := wpgx.WithDBTimeout(context.Background(), "buffered", 100*time.Millisecond)
+	rows, err := pool.WConn().WQuery(ctx, "buffered", "SELECT 1")
+	suite.Require().NoError(err)
+	stmtCtx := rows.(interface{ Context() context.Context }).Context()
+	suite.Require().True(rows.Next())
+	time.Sleep(200 * time.Millisecond)
+	err = wpgx.ContextErr(stmtCtx)
+	suite.ErrorIs(err, wpgx.ErrDBTimeout, "a row visitor sees the expired database timeout")
+	suite.ErrorIs(err, context.DeadlineExceeded)
+	var n int
+	suite.NoError(rows.Scan(&n))
+	suite.False(rows.Next())
+	suite.NoError(rows.Err(), "rows received in time are not discarded")
+	rows.Close()
+	m, ok := gatheredMetric("wpgx_timeout_total", map[string]string{"app": app, "op": "buffered", "phase": "db"})
+	suite.True(ok)
+	suite.Equal(1.0, m.GetCounter().GetValue(), "the expired database timeout is counted")
 }

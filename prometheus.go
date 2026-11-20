@@ -95,7 +95,7 @@ func newMetricSet(appName string) *metricSet {
 		Timeout: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "wpgx_timeout_total",
-				Help: "statements that exceeded a wpgx budget; phase is acquire or db.",
+				Help: "statements whose wpgx budget expired; phase is acquire (waiting for a connection) or db (before the statement finished).",
 			}, timeoutLabels),
 	}
 }
@@ -193,8 +193,8 @@ func (s *metricSet) observeAcquire(name string, replicaName *ReplicaName, wait t
 }
 
 // observeDB records that statement @p name held its connection since
-// @p startedAt and finished with @p err.
-func (s *metricSet) observeDB(name string, replicaName *ReplicaName, startedAt time.Time, err error) {
+// @p startedAt, and whether its database timeout expired before it finished.
+func (s *metricSet) observeDB(name string, replicaName *ReplicaName, startedAt time.Time, timedOut bool) {
 	if s == nil {
 		return
 	}
@@ -202,7 +202,7 @@ func (s *metricSet) observeDB(name string, replicaName *ReplicaName, startedAt t
 		s.DBLatency.WithLabelValues(s.AppName, name, toLabel(replicaName)).Observe(
 			float64(time.Since(startedAt)) / float64(time.Millisecond))
 	}
-	if s.Timeout != nil && errors.Is(err, ErrDBTimeout) {
+	if s.Timeout != nil && timedOut {
 		s.Timeout.WithLabelValues(s.AppName, name, toLabel(replicaName), "db").Inc()
 	}
 }
