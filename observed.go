@@ -46,6 +46,15 @@ func (o *op) end(err error) {
 	}
 }
 
+// acquired records on the operation's span that it waited @p wait for a
+// pooled connection.
+func (o *op) acquired(wait time.Duration) {
+	if o == nil || o.span == nil {
+		return
+	}
+	o.span.SetAttributes(acquireWaitKey.Float64(float64(wait) / float64(time.Millisecond)))
+}
+
 // rows ends the operation when @p rows are finished, i.e. read to the end or
 // closed. pgx reports most query failures, such as execution and scan errors,
 // through rows.Err() rather than from Query.

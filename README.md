@@ -12,6 +12,58 @@ It is used by [sqlc](https://github.com/Stumble/sqlc), providing telementry for 
 - **WTx**: a transaction wrapper, implementing "WGConn".
 - **TestSuite**: a comprehensive testing framework for PostgreSQL database tests.
 
+## Database timeouts
+
+A database timeout bounds how long a statement holds a database connection,
+not how long it waits for one. sqlc generates `wpgx.WithDBTimeout(ctx, name, T)`
+for each query's `timeout` option; hand-written code can do the same:
+
+```go
+ctx = wpgx.WithDBTimeout(ctx, "GetBook", 250*time.Millisecond)
+row := pool.WConn().WQueryRow(ctx, "GetBook", sql, id)
+```
+
+- On a pool connection the statement first waits for a connection, at most the
+  larger of `T` and the pool's `AcquireTimeout` (default 2s). A statement in a
+  transaction already has its connection.
+- `T` then starts and lasts until the connection is free again: `Exec` or
+  `CopyFrom` returns, `Row.Scan` returns, or the `Rows` are read to the end or
+  closed. Reading rows counts against `T`.
+- The context's own deadline and cancellation always apply. The wait includes
+  the `BeforeAcquire` hook, which should return promptly once its context ends.
+- Rows already received before `T` expires can still be read; the statement's
+  context reports the expiry and `wpgx_timeout_total` counts it.
+- An expired wait matches `wpgx.ErrAcquireTimeout` and an expired `T` matches
+  `wpgx.ErrDBTimeout`; both also match `context.DeadlineExceeded`.
+- `Rows` returned under a database timeout have a `Context() context.Context`
+  method returning the statement's context. `wpgx.StatementErr(ctx, err)`
+  marks a deadline error from that context with `ErrDBTimeout`, and for a nil
+  `err` reports whether the database timeout expired (finishing the rows
+  cancels the context; that is not an error).
+- The timeout applies only to operations named `name`; nested statements with
+  other names are not affected. Without it, operations behave as before.
+
+Pool settings (also on read replicas; environment names with the default
+`postgres` prefix):
+
+| Field | Environment | Default | Meaning |
+|-------|-------------|---------|---------|
+| `AcquireTimeout` | `POSTGRES_ACQUIRETIMEOUT` | `2s` | shortest wait for a connection; zero means the default |
+| `MaxAcquireWaiters` | `POSTGRES_MAXACQUIREWAITERS` | `0` | statements that may wait at once; more fail with `ErrTooManyAcquireWaiters`; zero means no cap |
+
+Metrics for statements with a database timeout (existing metrics are unchanged;
+`wpgx_latency_milliseconds` still covers the wait):
+
+- `wpgx_acquire_wait_milliseconds{app,replica}`: time waited for a connection.
+- `wpgx_db_latency_milliseconds{app,op,replica}`: time the connection was held.
+- `wpgx_timeout_total{app,op,replica,phase}`: expired budgets, `phase` is
+  `acquire` (waiting for a connection) or `db` (expired before the statement
+  finished).
+- `wpgx_conn_pool{op=...}` adds `acquire_waiting` (statements waiting now) and
+  the cumulative `acquire_rejected_count`, `empty_acquire_count`,
+  `empty_acquire_wait_seconds`, `canceled_acquire_count` and `new_conns_count`.
+- Spans record the wait as `wpgx.acquire_wait_ms`.
+
 ## Testing
 
 This project includes a powerful test suite framework that supports two testing modes:
